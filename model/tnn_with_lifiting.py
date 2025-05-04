@@ -1,4 +1,6 @@
 import networkx as nx
+from baselines.modules.cell_network import CellNetwork
+from baselines.modules.layers import CWNN, MLP
 import torch
 import torch.nn as nn
 import torch_geometric
@@ -8,6 +10,7 @@ from torch_geometric.utils import to_undirected
 
 import torch.nn.functional as F
 
+from baselines.modules.dcm import DCM
 from layers.encoders.all_cell_features_encoders import AllCellFeatureEncoder
 from model.GNN import GIN, GPS
 # from layers.diff_lifting import DiffLifting
@@ -266,7 +269,7 @@ class TNN_KNN_MLP_N(nn.Module):
 
         self.feature_encoder = AllCellFeatureEncoder(in_channels=[in_channels,in_channels,in_channels], out_channels=hidden_dim,
                                                     proj_dropout=0.5)
-        if diff_lifting:
+        if diff_lifting ==  "diffLifting":
 
             if args.gnn == "GIN":
                 self.gnn = GIN(in_channels, embedding_dim, embedding_dim, num_layers_gnn).to(device)
@@ -323,6 +326,16 @@ class TNN_KNN_MLP_N(nn.Module):
             self.projection_sum = ProjectionSum()
 
             # self.attention_lift = AttentionLifting(feature_dim=in_channels, device=device)
+        elif diff_lifting == "DCMLifting":
+            n_post = 1
+    
+            pre_layers_size = [in_channels] + [64 for _ in range(1)]
+            post_layers =  [64 for _ in range(n_post)]
+            post_layers[0] *= 2
+            self.pre = MLP(layers_size=pre_layers_size)
+            self.post = MLP(layers_size=post_layers)
+            self.dcm = DCM(use_gcn=False, dgm_layers=2, dropout=0.5, gamma=50, std=0, k=4).to(device)
+            self.tnn_dcm = CellNetwork([hidden_dim, hidden_dim], dropout=0.5).to(device)
         if tnn_type in HYPERGRAPH_MODULES:
              hidden_dim = hidden_dim
         else:
@@ -390,6 +403,15 @@ class TNN_KNN_MLP_N(nn.Module):
 
     def forward(self, batch):
         data = batch
+        if self.dcm:
+                data.x_0 = self.pre(data.x)
+              #  print("Data before DCM: ", data)
+                data = self.dcm(data)
+             #   print("Data after DCM: ", data)
+                out = self.tnn_dcm(data)
+                return out , data["ne_probs"], data["np_probs"]
+
+
         if self.diff_lifting:
             x, edge_index = data.x.float(), data.edge_index
             # print("Initial data.x shape:", data.x.shape)  # Initial shape
@@ -490,7 +512,9 @@ class TNN_KNN_MLP_N(nn.Module):
                 return out["logits"]
 
                 ## Now the Cellular Complex Diff Lifiting
+                       
             else:
+      
 
                 knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
                 aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(
@@ -636,13 +660,15 @@ class TNN_KNN_MLP_N(nn.Module):
                 A = incidence_matrix_1.T @ incidence_matrix_1  # [num_edges, num_edges]
 
                 # Step 2: Remove diagonal (self-loops) using element-wise multiplication
-                num_tot_edges = A.size(0)
-                identity_indices = torch.arange(num_tot_edges, device=A.device).repeat(2, 1)
-                identity_values = torch.ones(num_tot_edges, device=A.device)
-                identity_mask = torch.sparse_coo_tensor(identity_indices, identity_values, size=A.size()).coalesce()
-
-                # Perform element-wise multiplication to remove diagonal entries
-                A = A * (1 - identity_mask.to_dense())
+                # num_tot_edges = A.size(0)
+                # identity_indices = torch.arange(num_tot_edges, device=A.device).repeat(2, 1)
+                # identity_values = torch.ones(num_tot_edges, device=A.device)
+                # identity_mask = torch.sparse_coo_tensor(identity_indices, identity_values, size=A.size()).coalesce()
+                #
+                # # Perform element-wise multiplication to remove diagonal entries
+                A_indices = A.indices()
+                mask = A_indices[0] == A_indices[1]
+                A._values()[~mask]
 
                 # Step 3: Replace all 2s with 1, keeping 0s and 1s untouched (differentiably!)
                 A = torch.sparse_coo_tensor(

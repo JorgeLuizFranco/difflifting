@@ -2,7 +2,7 @@ import torch
 from tqdm import tqdm
 
 
-def train_node(loader, model, loss_fn, optimizer, device):
+def train_node(loader, model, loss_fn, optimizer, device, avg_accuracy=None):
     model.train()
     total_loss = 0
     for batch in tqdm(loader):
