@@ -2,12 +2,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 
-
 class MLP(nn.Module):
-    def __init__(self, layers_size, dropout=0.0, pre=False,final_activation=False):
+    def __init__(self, layers_size, dropout=0.0, final_activation=False):
         super(MLP, self).__init__()
         layers = []
-        for li in range(1, len(list(layers_size))):
+        for li in range(1, len(layers_size)):
             layers.append(nn.Dropout(p=dropout))
             layers.append(nn.Linear(layers_size[li - 1], layers_size[li]))
             if li == len(layers_size) - 1 and not final_activation:

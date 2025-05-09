@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from ogb.graphproppred import Evaluator
 from torchinfo import summary
 
+from model.dcm import DCMModule
 from model.tnn_with_lifiting import TNN_KNN_MLP_N
 from model.tnn_with_lifting_graph_classific import TNN_KNN_MLP_G
 from node_classification.train_node_classification import train_node, evaluate_node
@@ -37,20 +38,64 @@ if __name__ == '__main__':
     val_loader = data[1]
     test_loader = data[2]
 
-    diff_lifting = True if args.lifting == "diffLifting" else False
-    model = TNN_KNN_MLP_N(num_features, args, hidden_dim=64, num_classes=num_classes,
-                          k=6, diff_lifting=diff_lifting, global_pool=args.global_pooling, device=device,
-                          tnn_type=args.tnn,
-                          num_layers_tnn=args.num_layers, num_layers_gnn=args.num_layers_gnn,
-                          embedding_dim=args.gnn_embedding_dim)
+
+
+    diff_lifting = args.lifting
+    avg_accuracy=None
+    if args.lifting=="DCMLifting":
+        config = {
+            "metric": {"name": "val_acc", "goal": "maximize"},
+            "seed": 42,
+            "data_seed": 0,
+            "hsize": 32,
+            "n_pre": 1,
+            "n_post": 1,
+            "n_conv": 1,
+            "n_dgm_layers": 2,
+            "dropout": 0.5,
+            "lr": 0.01,
+            "use_gcn": True,
+            "k": 4,
+            "graph_loss_reg": 1,
+            "poly_loss_reg": 1,
+        }
+        hsize = config["hsize"]
+        gamma = 50
+        std = 0
+        hyperparams = {
+            "num_features": num_features,
+            "num_classes": num_classes,
+            "pre_layers": [num_features]
+                          + [hsize for _ in range(config["n_pre"])],
+            "post_layers": [hsize for _ in range(config["n_post"])]
+                           + [num_classes],
+            "dgm_layers": [hsize for _ in range(config["n_dgm_layers"] + 1)],
+            "conv_layers": [hsize for _ in range(config["n_conv"])],
+            "lr": config["lr"],
+            "use_gcn": config["use_gcn"],
+            "dropout": config["dropout"],
+            "k": config["k"],
+            "gamma": gamma,
+            "std": std,
+            "graph_loss_reg": config["graph_loss_reg"],
+            "poly_loss_reg": config["poly_loss_reg"],
+            "ensemble_steps": 1,
+        }
+        model = DCMModule(hyperparams)
+    else:
+        model = TNN_KNN_MLP_N(num_features, args, hidden_dim=64, num_classes=num_classes,
+                              k=6, diff_lifting=diff_lifting, global_pool=args.global_pooling, device=device,
+                              tnn_type=args.tnn,
+                              num_layers_tnn=args.num_layers, num_layers_gnn=args.num_layers_gnn,
+                              embedding_dim=args.gnn_embedding_dim)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
 
-    def train_eval(model, loss_fn, optimizer, evaluator, device):
-        train_loss = train_node(train_loader, model, loss_fn, optimizer, device)
-        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",evaluator)
-        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", evaluator)
+    def train_eval(model, loss_fn, optimizer, evaluator, args, device):
+        train_loss = train_node(train_loader, model, loss_fn, optimizer, device, args, avg_accuracy, **config)
+        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",args,evaluator)
+        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", args,evaluator)
         return train_loss, val_loss, val_acc, test_loss, test_acc
 
 
@@ -87,6 +132,7 @@ if __name__ == '__main__':
             loss_fn,
             optimizer,
             evaluator,
+            args,
             device
         )
 

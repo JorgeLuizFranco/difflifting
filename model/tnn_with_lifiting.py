@@ -326,16 +326,6 @@ class TNN_KNN_MLP_N(nn.Module):
             self.projection_sum = ProjectionSum()
 
             # self.attention_lift = AttentionLifting(feature_dim=in_channels, device=device)
-        elif diff_lifting == "DCMLifting":
-            n_post = 1
-    
-            pre_layers_size = [in_channels] + [64 for _ in range(1)]
-            post_layers =  [64 for _ in range(n_post)]
-            post_layers[0] *= 2
-            self.pre = MLP(layers_size=pre_layers_size)
-            self.post = MLP(layers_size=post_layers)
-            self.dcm = DCM(use_gcn=False, dgm_layers=2, dropout=0.5, gamma=50, std=0, k=4).to(device)
-            self.tnn_dcm = CellNetwork([hidden_dim, hidden_dim], dropout=0.5).to(device)
         if tnn_type in HYPERGRAPH_MODULES:
              hidden_dim = hidden_dim
         else:
@@ -403,14 +393,6 @@ class TNN_KNN_MLP_N(nn.Module):
 
     def forward(self, batch):
         data = batch
-        if self.dcm:
-                data.x_0 = self.pre(data.x)
-              #  print("Data before DCM: ", data)
-                data = self.dcm(data)
-             #   print("Data after DCM: ", data)
-                out = self.tnn_dcm(data)
-                return out , data["ne_probs"], data["np_probs"]
-
 
         if self.diff_lifting:
             x, edge_index = data.x.float(), data.edge_index
