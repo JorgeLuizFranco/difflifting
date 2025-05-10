@@ -7,7 +7,7 @@ from itertools import combinations, compress
 
 import networkx as nx
 import torch
-from entmax import entmax15
+from entmax import entmax15, entmax_bisect
 from torch import Tensor
 from torch_geometric.utils import coalesce, remove_self_loops, scatter, to_undirected
 
@@ -210,7 +210,7 @@ def compute_Lup_entmax(x, boundaries, id_maps, ln, std):
 
         vprobs = vprobs + torch.empty(vprobs.size()).normal_(mean=0, std=std)
         vprobs = entmax15(ln(vprobs))
-        # vprobs = entmax_bisect(ln(vprobs), alpha=1.17)
+        # vprobs = entmax_bisect(ln(vprobs), alpha=1)
         for valid in list(compress(tmp_idx, (vprobs > 0).tolist())):
             comb += combinations(valid, 2)
 

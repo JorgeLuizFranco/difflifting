@@ -43,9 +43,11 @@ if __name__ == '__main__':
     diff_lifting = args.lifting
     avg_accuracy=None
     if args.lifting=="DCMLifting":
+        torch.set_default_tensor_type("torch.cuda.FloatTensor")
+        torch.set_float32_matmul_precision("high")
         config = {
             "metric": {"name": "val_acc", "goal": "maximize"},
-            "seed": 42,
+            "seed": args.seed,
             "data_seed": 0,
             "hsize": 32,
             "n_pre": 1,
