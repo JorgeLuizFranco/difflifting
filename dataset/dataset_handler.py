@@ -9,7 +9,7 @@ from torch_geometric.utils import degree
 from torch_geometric.datasets import ZINC, TUDataset
 import torch_geometric.transforms as T
 from torch_geometric.datasets import KarateClub
-from torch_geometric.datasets import Planetoid
+from torch_geometric.datasets import Planetoid, Coauthor, WikipediaNetwork, WebKB
 from torch_geometric.datasets import HeterophilousGraphDataset
 from torch_geometric.loader import DataLoader
 
@@ -19,49 +19,59 @@ from tools.collate import collate_fn
 from tools.lifting.clique_lifting import SimplicialCliqueLifting
 from tools.lifting.khop import SimplicialKHopLifting
 from tools.lifting.hypergraph import HypergraphKHopLifting
+from tools.lifting.hypergraph import HypergraphKNNLifting
 from tools.lifting.neighboorhood_complex import NeighborhoodComplexLifting
 from tools.lifting.cycle_lifting import CellCycleLifting
+
 from tools.normalize import normalize_matrix
 
-NODES_PREDICTION_DATASET = ["Cora", "Citeseer", "Pubmed", "karate", "Roman-empire", "Amazon-ratings", "Minesweeper", "Tolokers"]
-HETEROPHILIC_DATASETS = ["Roman-empire", "Amazon-ratings", "Minesweeper", "Tolokers"]
-DIFFERENTIABLE_LIFTINGS = ["DCMLifting", "diffLifting"]
+NODES_PREDICTION_DATASET = ["Cora", "Citeseer", "Pubmed", "karate", ]
+COAUTHOR_DATASETS = ["CS", "Physics"]
+WEBKBDatasets = ["Cornell", "Texas", "Wisconsin"]
+WIKIPEDIADatasets = ["chameleon", "crocodile", "squirrel"]
+HETEROPHILIC_DATASETS = WEBKBDatasets + WIKIPEDIADatasets
+NODES_PREDICTION_DATASET = NODES_PREDICTION_DATASET + COAUTHOR_DATASETS + WEBKBDatasets + WIKIPEDIADatasets
+DIFFERENTIABLE_LIFTINGS = ["DCMLifting", "difflifting"]
 LIFTINGS = {
-    "SimplicialCliqueLifting":SimplicialCliqueLifting,
+    "SimplicialCliqueLifting": SimplicialCliqueLifting,
     "NeighborhoodComplexLifting": NeighborhoodComplexLifting,
-    "SimplicialKHopLifting":SimplicialKHopLifting,
+    "SimplicialKHopLifting": SimplicialKHopLifting,
     "CellCycleLifting": CellCycleLifting,
-    "HypergraphKHopLifting": HypergraphKHopLifting
+
+    "HypergraphKHopLifting": HypergraphKHopLifting,
+    "HypergraphKNNLifting": lambda **kwargs: HypergraphKNNLifting(k_value=kwargs.get("k", 1), **kwargs),
+
 }
 PATH = "../DATA/DATASETS"
 
+
 class FilterConstant(object):
-  def __init__(self, dim):
-    """Initializes the FilterConstant class.
-
-    Parameters
-    ----------
-    dim : int
-        The number of features to output for each node.
-    """
+    def __init__(self, dim):
+        """Initializes the FilterConstant class.
     
-    self.dim = dim
+        Parameters
+        ----------
+        dim : int
+            The number of features to output for each node.
+        """
 
-  def __call__(self, data):
-    """Replace node features with a constant vector of ones.
+        self.dim = dim
 
-    Parameters
-    ----------
-    data : torch_geometric.data.Data
-        The input data object.
-
-    Returns
-    -------
-    torch_geometric.data.Data
-        The modified data object with node features replaced by a constant vector of ones.
-    """
-    data.x = torch.ones(data.num_nodes, self.dim)
-    return data
+    def __call__(self, data):
+        """Replace node features with a constant vector of ones.
+    
+        Parameters
+        ----------
+        data : torch_geometric.data.Data
+            The input data object.
+    
+        Returns
+        -------
+        torch_geometric.data.Data
+            The modified data object with node features replaced by a constant vector of ones.
+        """
+        data.x = torch.ones(data.num_nodes, self.dim)
+        return data
 
 
 def get_ogb_data(name: str) -> PygGraphPropPredDataset:
@@ -76,9 +86,9 @@ def get_ogb_data(name: str) -> PygGraphPropPredDataset:
     path = osp.join(osp.dirname(osp.realpath(__file__)), PATH, name)
     dataset = PygGraphPropPredDataset(name=name, root=path)
 
-
-
     return dataset
+
+
 def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
     """Returns three DataLoaders from the given datasets.
 
@@ -92,7 +102,7 @@ def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
         A tuple containing the DataLoaders for training, validation, and testing.
     """
     from torch.utils.data import DataLoader
-
+    generator = torch.Generator(device='cuda')
     train_loader = DataloadDataset(
         train_set,
     )
@@ -100,7 +110,8 @@ def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
         train_loader,
         batch_size,
         shuffle=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        generator=generator
     )
     valid_loader = DataloadDataset(
         val_set
@@ -109,7 +120,8 @@ def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
         valid_loader,
         batch_size,
         shuffle=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        generator=generator
     )
     test_loader = DataloadDataset(
         test_set
@@ -118,7 +130,8 @@ def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
         test_loader,
         batch_size,
         shuffle=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        generator=generator
     )
     return train_loader, valid_loader, test_loader
 
@@ -140,7 +153,7 @@ def divide_train_val_test_split(dataset: PygGraphPropPredDataset, args):
         data_val = dataset[split_idx["valid"]]
         data_test = dataset[split_idx["test"]]
         if args.lifting != "diffLifting":
-            dataset =  lift_topology(dataset, args)
+            dataset = lift_topology(dataset, args)
             train_data = dataset[split_idx["train"]]
             data_val = dataset[split_idx["valid"]]
             data_test = dataset[split_idx["test"]]
@@ -176,14 +189,14 @@ def get_graph_classification_dataset(dataset: str, batch_size, args, device, see
             val_set = add_positional_encoding(args, val_set)
             test_set = add_positional_encoding(args, test_set)
         num_nodes_features = train_set.x.shape[1]
-        dataloaders = get_data_loaders(train_set,val_set, test_set, batch_size)
-        return  dataloaders, num_nodes_features, 1
+        dataloaders = get_data_loaders(train_set, val_set, test_set, batch_size)
+        return dataloaders, num_nodes_features, 1
     else:
         dataset = tu_datasets(dataset, args)
         if args.gnn == "GPS":
             dataset = add_positional_encoding(args, dataset)
         train_set, val_set, test_set = data_split(dataset, seed)
-        dataloaders = get_data_loaders(train_set,val_set, test_set, batch_size)
+        dataloaders = get_data_loaders(train_set, val_set, test_set, batch_size)
 
     return dataloaders, dataset.num_features, dataset.num_classes
 
@@ -205,6 +218,7 @@ def ensure_float_features(dataset):
             data.edge_attr = data.edge_attr.long()
     return dataset
 
+
 def get_zinc(args):
     """Loads the ZINC dataset and returns the training, validation, and test sets.
 
@@ -213,17 +227,17 @@ def get_zinc(args):
     """
     path = osp.join(osp.dirname(osp.realpath(__file__)), PATH, "ZINC")
     train_data = ZINC(path, subset=True, split="train")
-    data_val = ZINC(path, subset=True, split="val" )
+    data_val = ZINC(path, subset=True, split="val")
     data_test = ZINC(path, subset=True, split="test")
 
     if args.lifting != "diffLifting":
-        train_data =  lift_topology(train_data, args)
+        train_data = lift_topology(train_data, args)
         data_val = lift_topology(data_val, args)
         data_test = lift_topology(data_test, args)
     return train_data, data_val, data_test
 
 
-def tu_datasets(name,args, no_feat_replacement='constant'):
+def tu_datasets(name, args, no_feat_replacement='constant'):
     """Loads a TUDataset and applies feature replacement if necessary.
 
     Args:
@@ -238,9 +252,12 @@ def tu_datasets(name,args, no_feat_replacement='constant'):
     """
     path = osp.join(osp.dirname(osp.realpath(__file__)), PATH, name)
     if name == "IMDB-BINARY":
-        dataset = TUDataset(name=name, root=path, transform= T.Compose([NodeDegrees(), OneHotDegreeFeatures()]),use_node_attr=False,)
+        dataset = TUDataset(name=name, root=path, transform=T.Compose([NodeDegrees(), OneHotDegreeFeatures()]),
+                            use_node_attr=False, )
     elif name == "REDDIT-BINARY":
-        dataset = TUDataset(name=name, root=path, transform= T.Compose([EqualGausFeatures(**{"mean": 0, "std": 0.1, "num_features": 10})]),use_node_attr=False,)
+        dataset = TUDataset(name=name, root=path,
+                            transform=T.Compose([EqualGausFeatures(**{"mean": 0, "std": 0.1, "num_features": 10})]),
+                            use_node_attr=False, )
 
     else:
         dataset = TUDataset(name=name, root=path,
@@ -252,18 +269,19 @@ def tu_datasets(name,args, no_feat_replacement='constant'):
 
 
 def lift_topology(dataset, args):
-        data_list = []
-        max_dim = 0
-        for i, d in enumerate(dataset):
-            lift_fn = LIFTINGS[args.lifting](signed=args.signed)
-            new_data = lift_fn(d)
-            for key, value in new_data.items():
-                if key.startswith("hodge_laplacian_"):
-                    setattr(d, key,normalize_matrix(value, int(key[-1])))
-                setattr(d, key,value)
-            data_list.append(d)
-        dataset.data, dataset.slices = dataset.collate(data_list)
-        return dataset
+    data_list = []
+    max_dim = 0
+    for i, d in enumerate(dataset):
+        lift_fn = LIFTINGS[args.lifting](signed=args.signed, t=args.t, k=args.k)
+        new_data = lift_fn(d)
+        for key, value in new_data.items():
+            if key.startswith("hodge_laplacian_"):
+                setattr(d, key, normalize_matrix(value, int(key[-1])))
+            setattr(d, key, value)
+        data_list.append(d)
+    dataset.data, dataset.slices = dataset.collate(data_list)
+    return dataset
+
 
 def data_split(dataset, seed):
     """Splits a dataset into training, validation, and test sets using stratified shuffle split.
@@ -284,6 +302,7 @@ def data_split(dataset, seed):
     test_data = dataset[val_test_idx[test_idx]]
     return train_data, val_data, test_data
 
+
 def remove_duplicated_edges(edge_index):
     """Removes duplicated edges from an edge_index tensor.
 
@@ -301,7 +320,7 @@ def remove_duplicated_edges(edge_index):
     return torch.tensor(list(arestas), dtype=torch.long).T
 
 
-def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
+def get_node_prediction_dataset(dataset, args, dim=None, seed=42):
     """Loads a dataset for node-level prediction tasks.
 
     Args:
@@ -323,8 +342,8 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
         data.train_mask[:num_train_nodes] = True
         data.test_mask = ~data.train_mask
         # data.edge_index_undirected= remove_duplicated_edges(data.edge_index)
-        
-    elif dataset=="Cora":
+
+    elif dataset == "Cora":
         dataset = Planetoid(root='data', name='cora', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS":
             dataset = add_positional_encoding(args, dataset)
@@ -333,8 +352,8 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
         else:
             data = lift_topology(dataset, args)[0]
         # data.edge_index_undirected= remove_duplicated_edges(data.edge_index)
-        
-    elif dataset=="Citeseer":
+
+    elif dataset == "Citeseer":
         dataset = Planetoid(root='data', name='CiteSeer', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS":
             dataset = add_positional_encoding(args, dataset)
@@ -344,7 +363,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
             data = lift_topology(dataset, args)[0]
         # data.edge_index_undirected= remove_duplicated_edges(data.edge_index)
 
-    elif dataset=="Pubmed":
+    elif dataset == "Pubmed":
         dataset = Planetoid(root='data', name='pubmed', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS":
             dataset = add_positional_encoding(args, dataset)
@@ -353,19 +372,49 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
         else:
             data = lift_topology(dataset, args)[0]
         # data.edge_index_undirected= remove_duplicated_edges(data.edge_index)
-    elif dataset in HETEROPHILIC_DATASETS:
-        dataset = HeterophilousGraphDataset(root='data', name=dataset)
+    elif dataset in COAUTHOR_DATASETS:
+        dataset = Coauthor(root='data', name=dataset, transform=T.NormalizeFeatures())
+
         if args.gnn == "GPS":
             dataset = add_positional_encoding(args, dataset)
         if args.lifting in DIFFERENTIABLE_LIFTINGS:
             data = dataset[0]
         else:
             data = lift_topology(dataset, args)[0]
-        data.train_mask = data.train_mask[:, args.number_of_mask]
-        data.val_mask = data.val_mask[:, args.number_of_mask]
-        data.test_mask = data.test_mask[:, args.number_of_mask]
+        data = random_coauthor_amazon_splits(data, dataset.num_classes, None)
+
+    elif dataset in HETEROPHILIC_DATASETS:
+        if dataset in WEBKBDatasets:
+            dataset = WebKB(root='data', name=dataset, transform=T.NormalizeFeatures())
+            if args.gnn == "GPS":
+                dataset = add_positional_encoding(args, dataset)
+            if args.lifting in DIFFERENTIABLE_LIFTINGS:
+                data = dataset[0]
+            else:
+                data = lift_topology(dataset, args)[0]
+            mask_nr = torch.randint(0, 10, (1,)).item()
+            data.train_mask = data.train_mask[:, mask_nr]
+            data.val_mask = data.val_mask[:, mask_nr]
+            data.test_mask = data.test_mask[:, mask_nr]
+
+
+
+        elif dataset in WIKIPEDIADatasets:
+            dataset = WikipediaNetwork(root='data', name=dataset, transform=T.NormalizeFeatures())
+            if args.gnn == "GPS":
+                dataset = add_positional_encoding(args, dataset)
+            if args.lifting in DIFFERENTIABLE_LIFTINGS:
+                data = dataset[0]
+            else:
+                data = lift_topology(dataset, args)[0]
+
+            mask_nr = torch.randint(0, 10, (1,)).item()
+            data.train_mask = data.train_mask[:, mask_nr]
+            data.val_mask = data.val_mask[:, mask_nr]
+            data.test_mask = data.test_mask[:, mask_nr]
     dataloaders = get_data_loaders([data], [data], [data])
     return dataloaders, dataset.num_features, dataset.num_classes
+
 
 def choose_dataset(args, device):
     """Chooses the appropriate dataset function based on the input data.
@@ -382,6 +431,7 @@ def choose_dataset(args, device):
     else:
         return get_graph_classification_dataset(args.dataset, args.batch_size, args, device)
 
+
 def add_positional_encoding(args, dataset):
     positional_encoder = AddRandomWalkPE(walk_length=args.positional_walking_len, attr_name='pe')
     graph_with_positional_encoder = []
@@ -391,8 +441,44 @@ def add_positional_encoding(args, dataset):
     return dataset
 
 
-
 import torch_geometric
+
+
+def index_to_mask(index, size):
+    mask = torch.zeros(size, dtype=torch.bool, device=index.device)
+    mask[index] = 1
+    return mask
+
+
+def random_coauthor_amazon_splits(data, num_classes, lcc_mask):
+    # Set random coauthor/co-purchase splits:
+    # * 20 * num_classes labels for training
+    # * 30 * num_classes labels for validation
+    # rest labels for testing
+
+    indices = []
+    if lcc_mask is not None:
+        for i in range(num_classes):
+            index = (data.y[lcc_mask] == i).nonzero().view(-1)
+            index = index[torch.randperm(index.size(0))]
+            indices.append(index)
+    else:
+        for i in range(num_classes):
+            index = (data.y == i).nonzero().view(-1)
+            index = index[torch.randperm(index.size(0))]
+            indices.append(index)
+
+    train_index = torch.cat([i[:20] for i in indices], dim=0)
+    val_index = torch.cat([i[20:50] for i in indices], dim=0)
+
+    rest_index = torch.cat([i[50:] for i in indices], dim=0)
+    rest_index = rest_index[torch.randperm(rest_index.size(0))]
+
+    data.train_mask = index_to_mask(train_index, size=data.num_nodes)
+    data.val_mask = index_to_mask(val_index, size=data.num_nodes)
+    data.test_mask = index_to_mask(rest_index, size=data.num_nodes)
+
+    return data
 
 
 class DataloadDataset(torch_geometric.data.Dataset):

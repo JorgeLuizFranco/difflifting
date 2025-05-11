@@ -209,8 +209,8 @@ def compute_Lup_entmax(x, boundaries, id_maps, ln, std):
             poly_probs[idxs] += vprobs[i]
 
         vprobs = vprobs + torch.empty(vprobs.size()).normal_(mean=0, std=std)
-        vprobs = entmax15(ln(vprobs))
-        # vprobs = entmax_bisect(ln(vprobs), alpha=1)
+        # vprobs = entmax15(ln(vprobs))
+        vprobs = entmax_bisect(ln(vprobs), alpha=1)
         for valid in list(compress(tmp_idx, (vprobs > 0).tolist())):
             comb += combinations(valid, 2)
 
