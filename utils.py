@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="DiffLifting for GNN tasks")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-    parser.add_argument("--gnn", type=str, default="GIN", choices=["GIN", "GPS"])
+    parser.add_argument("--gnn", type=str, default="GIN", choices=["GIN", "GPS", "GCN"])
     parser.add_argument("--tnn", type=str, default="UniGCNII", choices=["CWN", "SCN2", "CXN", "UniGCNII", "UniGIN", "UniGCN", "HyperGAT"])
     parser.add_argument(
         "--dataset",
@@ -92,6 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positional_walking_len", type=int, default=20)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--no_readout", action='store_false')
+    parser.add_argument("--use_only_gnn", action='store_true')
     parser.add_argument("--signed", type=bool, default=False)
     parser.add_argument("--use_dcm_split", action='store_true')
     parser.add_argument("--no-bn", dest="bn", action="store_false")
