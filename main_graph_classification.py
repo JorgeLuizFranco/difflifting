@@ -7,6 +7,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from ogb.graphproppred import Evaluator
 from torchinfo import summary
 
+from model.GNNS import GIN, GCN
+from model.tnn_with_lifiting import TNN_KNN_MLP_N
 from model.tnn_with_lifting_graph_classific import TNN_KNN_MLP_G
 from train import train, evaluate
 from dataset.dataset_handler import choose_dataset
@@ -37,9 +39,19 @@ if __name__ == '__main__':
 
 
     diff_lifting = True if args.lifting == "diffLifting" else False
-    model = TNN_KNN_MLP_G(num_features, args, hidden_dim=args.hidden_dim, num_classes=num_classes,
-                          k=6, diff_lifting=diff_lifting, global_pool=args.global_pooling, device=device, tnn_type=args.tnn,
-                          num_layers_tnn=args.num_layers, num_layers_gnn=args.num_layers_gnn, embedding_dim=args.gnn_embedding_dim)
+    if args.use_only_gnn:
+        if args.gnn == 'GIN':
+            model = GIN(in_channels=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
+        else:
+            model = GCN(in_channels=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
+    else:
+
+        model = TNN_KNN_MLP_G(num_features, args, hidden_dim=args.hidden_dim, num_classes=num_classes,
+                              k=6, diff_lifting=diff_lifting, global_pool=args.global_pooling, device=device,
+                              tnn_type=args.tnn,
+                              num_layers_tnn=args.num_layers, num_layers_gnn=args.num_layers_gnn,
+                              embedding_dim=args.gnn_embedding_dim)
+        model = model.to(device)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 

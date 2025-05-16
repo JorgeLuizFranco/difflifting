@@ -5,11 +5,12 @@ from tqdm import tqdm
 def train(loader, model, loss_fn, optimizer, device):
     model.train()
     total_loss = 0
-    for batch in tqdm(loader):
+    for batch in loader:
         batch = batch.to(device)
         optimizer.zero_grad()
         out = model(batch)
-        loss = loss_fn(out.squeeze(), batch.y.squeeze()) / batch.num_graphs
+        loss = loss_fn(out, batch.y
+                       ) / batch.num_graphs
         loss.backward()
         # for name, param in model.named_parameters():
         #     if param.grad is None:

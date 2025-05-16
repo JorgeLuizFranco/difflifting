@@ -92,7 +92,7 @@ def get_ogb_data(name: str) -> PygGraphPropPredDataset:
 
 
     return dataset
-def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
+def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=32):
     """Returns three DataLoaders from the given datasets.
 
     Args:

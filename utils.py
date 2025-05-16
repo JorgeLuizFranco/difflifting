@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset",
         type=str,
-        default="Texas",
+        default="MUTAG",
         choices=["Cora", "Citeseer", "Pubmed",   #Classic Node classification datasets
              "CS", "Physics","Cornell", "Texas", "Wisconsin","chameleon", "crocodile", "squirrel", #Heterophilous Graph dataset
                  "ogbg-molhiv", "NCI1", "NCI109", "IMDB-BINARY",  # Graph Classification datasets
@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--positional_walking_len", type=int, default=20)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--no_readout", action='store_false')
-    parser.add_argument("--use_only_gnn", action='store_true')
+    parser.add_argument("--use_only_gnn", action='store_false')
     parser.add_argument("--signed", type=bool, default=False)
     parser.add_argument("--use_dcm_split", action='store_true')
     parser.add_argument("--no-bn", dest="bn", action="store_false")

@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from ogb.graphproppred import Evaluator
 from torchinfo import summary
 
-from model.GNNS import GIN
+from model.GNNS import GIN, GCN
 from model.tnn_with_lifiting import TNN_KNN_MLP_N
 from model.tnn_with_lifting_graph_classific import TNN_KNN_MLP_G
 from node_classification.train_node_classification import train_node, evaluate_node
@@ -43,9 +43,9 @@ if __name__ == '__main__':
     diff_lifting = True if args.lifting == "diffLifting" else False
     if args.use_only_gnn:
         if args.gnn == 'GIN':
-            model = GIN(in_feat=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
+            model = GIN(in_channels=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
         else:
-            model = GCN(in_feat=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
+            model = GCN(in_channels=num_features, dim_h=args.hidden_dim, out_channels=num_classes)
     else:
 
         model = TNN_KNN_MLP_N(num_features, args, hidden_dim=args.hidden_dim, num_classes=num_classes,
