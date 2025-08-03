@@ -50,12 +50,12 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="DiffLifting for GNN tasks")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-    parser.add_argument("--gnn", type=str, default="GIN", choices=["GIN", "GPS"])
-    parser.add_argument("--tnn", type=str, default="UniGIN", choices=["CWN", "SCN2", "CXN", "UniGCNII", "UniGIN", "UniGCN", "HyperGAT", "TOPOTUNE"])
+    parser.add_argument("--gnn", type=str, default="GPS", choices=["GIN", "GPS"])
+    parser.add_argument("--tnn", type=str, default="TOPOTUNE", choices=["CWN", "SCN2", "CXN", "UniGCNII", "UniGIN", "UniGCN", "HyperGAT", "TOPOTUNE"])
     parser.add_argument(
         "--dataset",
         type=str,
-        default="PROTEINS",
+        default="Texas",
         choices=["Cora", "Citeseer", "Pubmed",   #Classic Node classification datasets
              "CS", "Physics","Cornell", "Texas", "Wisconsin","chameleon", "crocodile", "squirrel", #Heterophilous Graph dataset
                  "ogbg-molhiv", "NCI1", "NCI109", "IMDB-BINARY",  # Graph Classification datasets
@@ -99,8 +99,10 @@ def parse_args() -> argparse.Namespace:
         "--deepset_aggr_type", type=str, default="sum", choices=["sum", "cat", "mean"]
     )
     parser.add_argument(
-        "--sub_gccn_model", type=str, default="GIN", choices=["GAT", "GCN" , "GIN"]
+        "--sub_gccn_model", type=str, default="GPS", choices=["GAT", "GCN" , "GIN", "GPS"]
     )
+    parser.add_argument("--sub_gccn_model_n_layers", type=int, default=4)
+
     parser.add_argument(
         "--global_pooling", type=str, default="mean", choices=["sum", "mean"]
     )
