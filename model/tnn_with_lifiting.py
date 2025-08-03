@@ -300,7 +300,11 @@ class TNN_KNN_MLP_N(nn.Module):
             in_channels_1=hidden_dim,
             in_channels_2=hidden_dim,
             n_layers=num_layers_tnn,
-            device=device
+            device=device,
+            sub_gccn=args.sub_gccn_model,
+            sub_gccn_layers=args.sub_gccn_model_n_layers,
+            neighboors=args.topo_tune_neighboors,
+            # graph_classific=False
         )
 
         if args.no_readout:
@@ -692,7 +696,31 @@ class TNN_KNN_MLP_N(nn.Module):
                     ).coalesce()
 
                 # incidence_matrix_2= torch.div(incidence_matrix_2,2,rounding_mode='trunc')
+                # Calcular a adjacência_2 entre as arestas
+                adjacency_2 = incidence_matrix_2.T @ incidence_matrix_2  # Produto de matrizes entre incidência das arestas e triângulos
 
+                # Remover os autoloops (diagonal) da adjacência_2 (auto-conexões)
+                num_edges = adjacency_2.size(0)
+                identity_indices = torch.arange(num_edges, device=adjacency_2.device).repeat(2, 1)
+                identity_values = torch.ones(num_edges, device=adjacency_2.device)
+
+                # Criar uma máscara para remover os autoloops
+                identity_mask = torch.sparse_coo_tensor(identity_indices, identity_values,
+                                                        size=adjacency_2.size()).coalesce()
+
+                # Multiplicar para remover a diagonal (self-loops)
+                adjacency_2 = adjacency_2 * (1 - identity_mask.to_dense())
+
+                # Substituir todos os 2s por 1, mantendo os 0s e 1s intactos (diferenciavelmente)
+                adjacency_2 = torch.sparse_coo_tensor(
+                    adjacency_2.indices(),
+                    torch.clamp(adjacency_2.values(), max=1),
+                    adjacency_2.size(),
+                    device=adjacency_2.device
+                ).coalesce()
+
+                # Agora `adjacency_2` é a matriz de adjacência entre as arestas
+                data.adjacency_2 = adjacency_2
                 data_for_lifting = {}
                 x_featured = self.feature_encoder(data)
                 data_for_lifting = {
@@ -700,7 +728,8 @@ class TNN_KNN_MLP_N(nn.Module):
                     "incidence_1": incidence_matrix_1,  # Node-to-edge incidence matrix
                     "incidence_2": incidence_matrix_2,  # edge_to-triangle
                     "adjacency_1": A,
-                    "adjacency_0": A_0
+                    "adjacency_0": A_0,
+                    "adjacency_2": adjacency_2
                 }
 
                 lifted_data = self.projection_sum(data_for_lifting)
@@ -709,7 +738,9 @@ class TNN_KNN_MLP_N(nn.Module):
                 lifted_data["adjacency_1"] = A
                 # print(lifted_data)
                 lifted_data["x_0"] = torch.div(lifted_data["x_0"], torch.max(self.k_v))
-                # print(lifted_data)
+                lifted_data["cell_statistics"] = cycles
+                lifted_data["pe"] = data.get("pe")
+
                 lifted_data_obj = Data(**lifted_data)
                 tnn_output = self.tnn(lifted_data_obj)
 

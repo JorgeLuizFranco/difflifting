@@ -11,8 +11,19 @@ def train_node(loader, model, loss_fn, optimizer, device):
         out = model(batch)
         loss = loss_fn(out[batch.train_mask], batch.y[batch.train_mask]) / batch.num_graphs
         loss.backward()
-
+        # # Verificação de gradientes com gradcheck (usado apenas com um batch pequeno ou exemplo)
+        # if batch.num_graphs == 1:  # Gradcheck funciona melhor com um exemplo por vez
+        #     batch.x = batch.x.requires_grad_()  # Certificando-se de que a entrada tenha requires_grad=True
+        #     # Certifique-se de que o modelo e o lote de entrada sejam compatíveis para o gradcheck
+        #     test = torch.autograd.gradcheck(model, batch, eps=1e-6, atol=1e-4)
+        #     print(test)
+        # for name, param in model.named_parameters():
+        #     if param.grad is not None:
+        #         print(f"{name} gradient: {param.grad}")
+        #     else:
+        #         print(f"{name} has no gradient")
         optimizer.step()
+
         total_loss = loss.item()
     return total_loss / len(loader)
 

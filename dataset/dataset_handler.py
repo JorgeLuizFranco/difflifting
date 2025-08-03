@@ -14,6 +14,7 @@ from torch_geometric.datasets import Planetoid, Coauthor, WikipediaNetwork, WebK
 from torch_geometric.datasets import HeterophilousGraphDataset
 from torch_geometric.loader import DataLoader
 
+from dataset.interrank_positional_encoding import AddRandomWalkPEInterrank
 from preprocessing.equal_gauss_features.equal_gaus_features import EqualGausFeatures
 from preprocessing.one_hot_degree_features.transforms import OneHotDegreeFeatures, NodeDegrees
 from tools.collate import collate_fn
@@ -338,7 +339,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
 
     elif dataset=="Cora":
         dataset = Planetoid(root='data', name='cora', split="full", transform=T.NormalizeFeatures())
-        if args.gnn == "GPS":
+        if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
         if args.lifting == "diffLifting":
             data = dataset[0]
@@ -347,7 +348,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
 
     elif dataset=="Citeseer":
         dataset = Planetoid(root='data', name='CiteSeer', split="full", transform=T.NormalizeFeatures())
-        if args.gnn == "GPS":
+        if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
         if args.lifting == "diffLifting":
             data = dataset[0]
@@ -356,7 +357,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
 
     elif dataset=="Pubmed":
         dataset = Planetoid(root='data', name='pubmed', split="full", transform=T.NormalizeFeatures())
-        if args.gnn == "GPS":
+        if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
         if args.lifting == "diffLifting":
             data = dataset[0]
@@ -365,7 +366,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
     elif dataset in COAUTHOR_DATASETS:
         dataset = Coauthor(root='data', name=dataset, transform=T.NormalizeFeatures())
 
-        if args.gnn == "GPS":
+        if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
         if args.lifting == "diffLifting":
             data = dataset[0]
@@ -378,7 +379,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
         if dataset in WEBKBDatasets:
             dataset = WebKB(root='data', name=dataset, transform=T.NormalizeFeatures())
 
-            if args.gnn == "GPS":
+            if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
                 dataset = add_positional_encoding(args, dataset)
             if args.lifting == "diffLifting":
                 data = dataset[0]
@@ -392,7 +393,7 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
             data.test_mask = data.test_mask[:, mask_nr]
         elif dataset in WIKIPEDIADatasets:
             dataset = WikipediaNetwork(root='data', name=dataset, transform=T.NormalizeFeatures())
-            if args.gnn == "GPS":
+            if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
                 dataset = add_positional_encoding(args, dataset)
             if args.lifting == "diffLifting":
                 data = dataset[0]
@@ -430,7 +431,12 @@ def choose_dataset(args, device):
         return get_graph_classification_dataset(args.dataset, args.batch_size, args, device)
 
 def add_positional_encoding(args, dataset):
-    positional_encoder = AddRandomWalkPE(walk_length=args.positional_walking_len, attr_name='pe')
+    if isinstance(args, dict):
+        positional_encoder = AddRandomWalkPEInterrank(walk_length=args.get("positional_walking_len"), attr_name='pe')
+        return positional_encoder(dataset)
+    else:
+        positional_encoder = AddRandomWalkPE(walk_length=args.positional_walking_len, attr_name='pe')
+
     graph_with_positional_encoder = []
     for graph in dataset:
         graph_with_positional_encoder.append(positional_encoder(graph))

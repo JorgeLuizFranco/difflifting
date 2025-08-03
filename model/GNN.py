@@ -83,7 +83,9 @@ class GPS(torch.nn.Module):
     def __init__(self,node_embedding_dim, hidden_channels: int,  pe_channels,edge_embedding_dim=4,  pe_dim: int=8, num_layers: int=5,
                  is_zinc=False,attn_type: str="multihead"):
         super().__init__()
-
+        # self.graph_classific = graph_classific
+        self.hidden_channels = hidden_channels
+        self.out_channels = hidden_channels
         self.node_emb = Linear(node_embedding_dim, hidden_channels - pe_dim)
         self.pe_lin = Linear(pe_channels, pe_dim)
         self.pe_norm = BatchNorm1d(pe_channels)
@@ -113,5 +115,5 @@ class GPS(torch.nn.Module):
             x = torch.cat((self.node_emb(x).squeeze(-1), self.pe_lin(x_pe)), 1)
 
         for conv in self.convs:
-            x = conv(x, edge_index, batch)
+            x = conv(x, edge_index)
         return x

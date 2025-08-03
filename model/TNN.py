@@ -14,8 +14,9 @@ from model.models.topotune import TopoTune
 from tools.normalize import normalize_matrix
 import torch
 
-from model.GNN import GIN
+from model.GNN import GIN, GPS
 
+HYPERGRAPH_LIFTINGS = [ ]
 
 class GCN(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
@@ -37,7 +38,7 @@ class GCN(torch.nn.Module):
 
 
 class TNN(nn.Module):
-    def __init__(self, model_type, in_channels, hidden_channels, in_channels_1=7, in_channels_2=7, normalize_laplacians=True,n_layers=4,device="cpu",sub_gccn="GAT", **kwargs):
+    def __init__(self, model_type, in_channels, hidden_channels, in_channels_1=7, in_channels_2=7, normalize_laplacians=True,n_layers=4,device="cpu",sub_gccn="GAT",sub_gccn_layers=2,neighboors=None, graph_classific=True,**kwargs):
         super().__init__()
         if model_type == "CWN":
             self.base_model = CWN(in_channels, in_channels_1, in_channels_2, hidden_channels, n_layers=n_layers, **kwargs).to(device)
@@ -59,21 +60,26 @@ class TNN(nn.Module):
         elif model_type == "AST":
             self.base_model =  AllSetTransformer(in_channels, in_channels,  n_layers=n_layers, n_heads=4).to(device)
         elif model_type == "TOPOTUNE":
-
-            neighborhoods = ["adjacency_0", "incidence_0","adjacency_1", "incidence_1"]
+            if neighboors is None:
+                neighborhoods = ["adjacency_0", "incidence_0","adjacency_1", "incidence_1"]
+            else:
+                neighborhoods = neighboors
             dim_hidden = hidden_channels
             if sub_gccn == "GAT":
-                sub_gccn_model = GAT(in_channels=in_channels, hidden_channels=dim_hidden, num_layers=1,
+                sub_gccn_model = GAT(in_channels=in_channels, hidden_channels=dim_hidden, num_layers= sub_gccn_layers,
                                  out_channels=dim_hidden,
                              heads=2, v2=False)
             elif sub_gccn == "GIN":
                 sub_gccn_model = GIN(in_channels, dim_hidden, dim_hidden, 2).to(device)
+            elif sub_gccn == "GPS":
+                # self.gnn = GPS(in_channels, embedding_dim, args.positional_walking_len, num_layers_gnn).to(device)
+                sub_gccn_model = GPS(in_channels, dim_hidden, 20,  sub_gccn_layers).to(device)
             else:
                 sub_gccn_model = GCN(in_channels=in_channels, hidden_channels=dim_hidden, out_channels=dim_hidden,)
             backbone_config = {
                 "GNN": sub_gccn_model,
                 "neighborhoods": neighborhoods,
-                "layers": 2,
+                "layers": n_layers,
                 "use_edge_attr": False,
                 "activation": "relu",
                 "gnn_type": sub_gccn,

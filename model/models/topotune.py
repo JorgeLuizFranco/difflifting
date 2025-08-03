@@ -5,7 +5,11 @@ import copy
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data
+from torch_geometric.transforms import AddRandomWalkPE
+from torch_geometric.utils import to_edge_index
 
+from dataset.dataset_handler import add_positional_encoding
+# from dataset.interrank_positional_encoding import apply_positional_encoding
 from model.GNN import GIN
 
 
@@ -88,6 +92,32 @@ class TopoTune(torch.nn.Module):
         self.hidden_channels = GNN.hidden_channels
         self.out_channels = GNN.out_channels
 
+    def apply_positional_encoding(self, data: Data, adjacencies=["adjacency_0", 'adjacency_1', "adjacency_2"]) -> Data:
+        # 1. Converta as representações de adjacência para o formato `edge_index`
+        for i, adjacency in enumerate(adjacencies):
+            if data.get(adjacency) is not None:
+                adjacency_edge_index = to_edge_index(data.get(adjacency))
+                data.edge_index = adjacency_edge_index[0]  # Atribuindo edge_index de adjacency_1
+            else:
+                raise ValueError("A adjacência 1 não está presente nos dados.")
+
+            # Debug: Verifique se o edge_index foi atribuído corretamente
+            # print(f"data.edge_index (de adjacency_1): {data.edge_index}")
+
+            # 2. Aplique o positional encoding para adjacency_1
+            pe_transform = AddRandomWalkPE(walk_length=20, attr_name=f'pe_{i}')  # Ajuste o valor de `walk_length` conforme necessário
+            data = pe_transform(data)  # Clone para preservar os dados originais
+
+            # 3. Converta `adjacency_0` para `edge_index` e aplique o positional encoding para adjacency_0
+            if data.adjacency_0 is not None:
+                adjacency_0_edge_index = to_edge_index(data.adjacency_0)
+                data.edge_index = adjacency_0_edge_index[0]  # Atribuindo edge_index de adjacency_0
+            else:
+                raise ValueError
+
+
+
+        return data
     def get_nbhd_cache(self, params):
         """Cache the nbhd information into a dict for the complex at hand.
 
@@ -210,16 +240,41 @@ class TopoTune(torch.nn.Module):
         edge_index, edge_attr = nbhd_cache
         device = getattr(params, f"x_{src_rank}").device
         feat_on_dst = torch.zeros_like(getattr(params, f"x_{dst_rank}"))
+
         x_in = torch.vstack([feat_on_dst, getattr(params, f"x_{src_rank}")])
         batch_expanded = torch.cat([torch.tensor(dst_batch), torch.tensor(src_batch)], dim=0)
 
-        batch_route = Data(
-            x=x_in,
-            edge_index=edge_index.to(device),
-            edge_attr=edge_attr.to(device),
-            edge_weight=edge_attr.to(device),
-            batch=batch_expanded.to(device),
-        )
+
+        if self.gnn_type == "GPS":
+            pe_on_dst = torch.zeros_like(getattr(params, f"pe_{dst_rank}"))
+            pe_in = torch.vstack([pe_on_dst, getattr(params, f"pe_{src_rank}")])
+            # batch_route = Data(
+            #     x=getattr(params, f"x_{src_rank}"),
+            #     edge_index=getattr(params, nbhd).indices(),
+            #     edge_weight=getattr(params, nbhd).values().squeeze(),
+            #     edge_attr=getattr(params, nbhd).values().squeeze(),
+            #     requires_grad=True,  # Certifique-se de que isso seja aplicado
+            # )
+            batch_route = Data(
+                x=x_in,
+                edge_index=edge_index.to(device),
+                edge_attr=edge_attr.to(device),
+                edge_weight=edge_attr.to(device),
+                batch=batch_expanded.to(device),
+                pe=pe_in.to(device),
+                requires_grad=True,
+            )
+
+        else:
+
+            batch_route = Data(
+                x=x_in,
+                edge_index=edge_index.to(device),
+                edge_attr=edge_attr.to(device),
+                edge_weight=edge_attr.to(device),
+                batch=batch_expanded.to(device),
+                requires_grad=True,
+            )
 
         return batch_route
 
@@ -244,7 +299,7 @@ class TopoTune(torch.nn.Module):
         torch.tensor
             The output of the GNN (updated features).
         """
-        if self.gnn_type=="GIN":
+        if self.gnn_type=="GIN" or self.gnn_type=="GPS":
             expanded_out = self.graph_routes[layer_idx][route_index](
                 batch_route
                 #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
@@ -282,7 +337,7 @@ class TopoTune(torch.nn.Module):
             if dst_rank not in x_out_per_rank:
                 x_out_per_rank[dst_rank] = x_out_per_route[route_index]
             else:
-                x_out_per_rank[dst_rank] += x_out_per_route[route_index]
+                x_out_per_rank[dst_rank] = x_out_per_rank[dst_rank]+ x_out_per_route[route_index]
         return x_out_per_rank
 
     def generate_membership_vectors(self, batch: Data):
@@ -338,6 +393,8 @@ class TopoTune(torch.nn.Module):
 
         nbhd_cache = self.get_nbhd_cache(batch)
         membership = self.generate_membership_vectors(batch)
+        if self.gnn_type == "GPS":
+            batch = self.apply_positional_encoding(batch)
 
         x_out_per_route = {}
         for layer_idx in range(self.layers):

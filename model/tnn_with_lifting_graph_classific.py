@@ -341,7 +341,9 @@ class TNN_KNN_MLP_G(nn.Module):
             in_channels_2=hidden_dim,
             n_layers=num_layers_tnn,
             device=device,
-            sub_gccn=args.sub_gccn_model
+            sub_gccn=args.sub_gccn_model,
+            sub_gccn_layers=args.sub_gccn_model_n_layers,
+            neighboors=args.topo_tune_neighboors,
         )
 
 
