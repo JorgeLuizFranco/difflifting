@@ -92,30 +92,27 @@ class TopoTune(torch.nn.Module):
         self.hidden_channels = GNN.hidden_channels
         self.out_channels = GNN.out_channels
 
-    def apply_positional_encoding(self, data: Data, adjacencies=["adjacency_0", 'adjacency_1', "adjacency_2"]) -> Data:
-        # 1. Converta as representações de adjacência para o formato `edge_index`
-        for i, adjacency in enumerate(adjacencies):
-            if data.get(adjacency) is not None:
-                adjacency_edge_index = to_edge_index(data.get(adjacency))
-                data.edge_index = adjacency_edge_index[0]  # Atribuindo edge_index de adjacency_1
-            else:
-                raise ValueError("A adjacência 1 não está presente nos dados.")
+    def apply_positional_encoding(self, data: Data, pe_rank=1) -> Data:
+        attr_name = f"pe_{pe_rank}"
+        adjacency = data.get(f"adjacency_{pe_rank}")
+        if adjacency is None:
+            raise ValueError(f"Adjacency adjacency_{pe_rank} is not present in the data.")
 
-            # Debug: Verifique se o edge_index foi atribuído corretamente
-            # print(f"data.edge_index (de adjacency_1): {data.edge_index}")
-
-            # 2. Aplique o positional encoding para adjacency_1
-            pe_transform = AddRandomWalkPE(walk_length=20, attr_name=f'pe_{i}')  # Ajuste o valor de `walk_length` conforme necessário
-            data = pe_transform(data)  # Clone para preservar os dados originais
-
-            # 3. Converta `adjacency_0` para `edge_index` e aplique o positional encoding para adjacency_0
-            if data.adjacency_0 is not None:
-                adjacency_0_edge_index = to_edge_index(data.adjacency_0)
-                data.edge_index = adjacency_0_edge_index[0]  # Atribuindo edge_index de adjacency_0
-            else:
-                raise ValueError
+        edge_index = to_edge_index(adjacency)[0]
+        data.edge_index = edge_index
 
 
+        data.num_nodes = getattr(data, f"x_{pe_rank}").shape[0]
+
+        pe_transform = AddRandomWalkPE(walk_length=20, attr_name=attr_name)
+        data = pe_transform(data)
+
+
+        pe = getattr(data, attr_name)
+        if pe.shape[0] != data.num_nodes:
+            print(f"[WARN] PE shape mismatch after PE: {pe.shape} vs expected {data.num_nodes}")
+            pe = F.pad(pe, (0, 0, 0, data.num_nodes - pe.shape[0]))
+            setattr(data, attr_name, pe)
 
         return data
     def get_nbhd_cache(self, params):
@@ -393,14 +390,15 @@ class TopoTune(torch.nn.Module):
 
         nbhd_cache = self.get_nbhd_cache(batch)
         membership = self.generate_membership_vectors(batch)
-        if self.gnn_type == "GPS":
-            batch = self.apply_positional_encoding(batch)
+
 
         x_out_per_route = {}
         for layer_idx in range(self.layers):
             for route_index, route in enumerate(self.routes):
                 src_rank, dst_rank = route
-
+                if self.gnn_type == "GPS":
+                    for rank in [src_rank, dst_rank]:
+                        batch = self.apply_positional_encoding(batch, pe_rank=rank)
                 if src_rank == dst_rank:
                     nbhd = self.neighborhoods[route_index]
                     batch_route = self.intrarank_expand(batch, src_rank, nbhd)
