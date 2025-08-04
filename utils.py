@@ -101,6 +101,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sub_gccn_model", type=str, default="GPS", choices=["GAT", "GCN" , "GIN", "GPS"]
     )
+    parser.add_argument(
+        "--topo_tune_neighboors",
+        type=int,
+        nargs='+',  # aceita uma ou mais ocorrências
+        default=["adjacency_0", "adjacency_1", "incidence_1"],
+        help="Número de camadas por modelo Sub-GCCN"
+    )
     parser.add_argument("--sub_gccn_model_n_layers", type=int, default=4)
 
     parser.add_argument(
