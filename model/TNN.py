@@ -61,7 +61,7 @@ class TNN(nn.Module):
             self.base_model =  AllSetTransformer(in_channels, in_channels,  n_layers=n_layers, n_heads=4).to(device)
         elif model_type == "TOPOTUNE":
             if neighboors is None:
-                neighborhoods = ["adjacency_0", "incidence_0","adjacency_1", "incidence_1"]
+                neighborhoods = ["1_laplacian_up_0","1_laplacian_up_1","1_laplacian_down_1","1_laplacian_down_2"]
             else:
                 neighborhoods = neighboors
             dim_hidden = hidden_channels

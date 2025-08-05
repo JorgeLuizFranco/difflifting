@@ -136,7 +136,7 @@ class TopoTune(torch.nn.Module):
             if src_rank != dst_rank and (src_rank, dst_rank) not in nbhd_cache:
                 n_dst_nodes = getattr(params, f"x_{dst_rank}").shape[0]
                 if src_rank > dst_rank:
-                    boundary = getattr(params, neighborhood).coalesce()
+                    boundary = getattr(params, neighborhood[2:]).coalesce()
                     nbhd_cache[(src_rank, dst_rank)] = (
                         interrank_boundary_index(
                             getattr(params, f"x_{src_rank}"),
@@ -145,7 +145,7 @@ class TopoTune(torch.nn.Module):
                         )
                     )
                 elif src_rank < dst_rank:
-                    coboundary = params.get(neighborhood).coalesce()#getattr(params, neighborhood).coalesce()
+                    coboundary = params.get(neighborhood[2:]).coalesce()#getattr(params, neighborhood).coalesce()
                     nbhd_cache[(src_rank, dst_rank)] = (
                         interrank_boundary_index(
                             getattr(params, f"x_{src_rank}"),

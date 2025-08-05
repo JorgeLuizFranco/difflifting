@@ -5,6 +5,7 @@ import torch_geometric
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.utils import is_undirected
 from torch_geometric.utils import to_undirected
+from torch_geometric.utils.sparse import to_edge_index
 
 import torch.nn.functional as F
 
@@ -325,14 +326,13 @@ class TNN_KNN_MLP_N(nn.Module):
             })
             # self.residual_concat = torch.nn.Linear(hidden_dim*2, num_classes)
 
-    def __create_laplacians(self, data, incidence_matrix_1, lifted_data, data_for_lifting):
-        new_edge_index, new_edge_attr = torch_geometric.utils.get_laplacian(data.edge_index)
-        data.x_1 = lifted_data["x_1"]
-        data.x_2 = lifted_data["x_2"]
+    def __create_laplacians(self, data, incidence_matrix_1, data_for_lifting):
+        new_edge_index, new_edge_attr = torch_geometric.utils.get_laplacian(to_edge_index(data.adjacency_0)[0])
+
         laplacian_0 = torch.sparse_coo_tensor(
             indices=new_edge_index,
             values=new_edge_attr,
-            size=(data.x.shape[0], data.x.shape[0])
+            size=(data.x_0.shape[0], data.x_0.shape[0])
         )
 
         data.laplacian_up_0 = laplacian_0
@@ -731,7 +731,6 @@ class TNN_KNN_MLP_N(nn.Module):
                     "adjacency_0": A_0,
                     "adjacency_2": adjacency_2
                 }
-
                 lifted_data = self.projection_sum(data_for_lifting)
 
 
@@ -742,6 +741,8 @@ class TNN_KNN_MLP_N(nn.Module):
                 lifted_data["pe"] = data.get("pe")
 
                 lifted_data_obj = Data(**lifted_data)
+                lifted_data_obj = self.__create_laplacians(lifted_data_obj, incidence_matrix_1, data_for_lifting)
+
                 tnn_output = self.tnn(lifted_data_obj)
 
                 batch["incidence_1"] = incidence_matrix_1
