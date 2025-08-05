@@ -10,7 +10,7 @@ from topomodelx.nn.simplicial.scn2 import SCN2
 from torch import nn
 from torch_geometric.nn import global_mean_pool, GAT, GCNConv
 
-from model.models.topotune import TopoTune
+from model.models.topotune import TopoTune, TopoTune_OneHasse
 from tools.normalize import normalize_matrix
 import torch
 
@@ -38,7 +38,7 @@ class GCN(torch.nn.Module):
 
 
 class TNN(nn.Module):
-    def __init__(self, model_type, in_channels, hidden_channels, in_channels_1=7, in_channels_2=7, normalize_laplacians=True,n_layers=4,device="cpu",sub_gccn="GAT",sub_gccn_layers=2,neighboors=None, graph_classific=True,**kwargs):
+    def __init__(self, model_type, in_channels, hidden_channels, in_channels_1=7, in_channels_2=7, normalize_laplacians=True,n_layers=4,device="cpu",sub_gccn="GAT",sub_gccn_layers=2,neighboors=["up_laplacian-0","down_laplacian-1","up_laplacian-1", "down_laplacian-2"], graph_classific=True,**kwargs):
         super().__init__()
         if model_type == "CWN":
             self.base_model = CWN(in_channels, in_channels_1, in_channels_2, hidden_channels, n_layers=n_layers, **kwargs).to(device)
@@ -61,7 +61,7 @@ class TNN(nn.Module):
             self.base_model =  AllSetTransformer(in_channels, in_channels,  n_layers=n_layers, n_heads=4).to(device)
         elif model_type == "TOPOTUNE":
             if neighboors is None:
-                neighborhoods = ["1_laplacian_up_0","1_laplacian_up_1","1_laplacian_down_1","1_laplacian_down_2"]
+                neighborhoods = neighboors
             else:
                 neighborhoods = neighboors
             dim_hidden = hidden_channels
@@ -82,9 +82,9 @@ class TNN(nn.Module):
                 "layers": n_layers,
                 "use_edge_attr": False,
                 "activation": "relu",
-                "gnn_type": sub_gccn,
+                # "gnn_type": sub_gccn,
             }
-            self.base_model = TopoTune(**backbone_config).to(device)
+            self.base_model = TopoTune_OneHasse(**backbone_config).to(device)
         self.incidence_models = ["UniGCN", "HyperGAT", "UniGIN", "UniSAGE"]
         self.pooling_fun = global_mean_pool
         self.normalize_laplacians = normalize_laplacians

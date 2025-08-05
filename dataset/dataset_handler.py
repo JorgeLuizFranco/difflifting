@@ -1,10 +1,12 @@
 import os.path as osp
+import os
+import random
 
 import torch
 from ogb.graphproppred import PygGraphPropPredDataset
 from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
 from torch_geometric.data import Batch
-from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 from torch_geometric.transforms import AddRandomWalkPE
 from torch_geometric.utils import degree, to_undirected
 from torch_geometric.datasets import ZINC, TUDataset
@@ -26,6 +28,7 @@ from tools.lifting.neighboorhood_complex import NeighborhoodComplexLifting
 from tools.lifting.cycle_lifting import CellCycleLifting
 from tools.lifting.discrete_lifting import DiscreteConfigurationComplexLifting
 from tools.lifting.kernel import HypergraphKernelLifting
+from tools.lifting.utils import select_neighborhoods_of_interest
 from tools.normalize import normalize_matrix
 
 NODES_PREDICTION_DATASET = ["Cora", "Citeseer", "Pubmed", "karate",]
@@ -135,6 +138,169 @@ def get_data_loaders(train_set, val_set=None, test_set=None, batch_size=1):
         collate_fn=collate_fn,
     )
     return train_loader, valid_loader, test_loader
+
+# Generate splits in different fasions
+def k_fold_split(labels, parameters):
+    """Return train and valid indices as in K-Fold Cross-Validation.
+
+    If the split already exists it loads it automatically, otherwise it creates the
+    split file for the subsequent runs.
+
+    Parameters
+    ----------
+    labels : torch.Tensor
+        Label tensor.
+    parameters : DictConfig
+        Configuration parameters.
+
+    Returns
+    -------
+    dict
+        Dictionary containing the train, validation and test indices, with keys "train", "valid", and "test".
+    """
+
+    data_dir = parameters.data_split_dir
+    k = parameters.k
+    fold = parameters.data_seed
+    assert fold < k, "data_seed needs to be less than k"
+
+    torch.manual_seed(0)
+    np.random.seed(0)
+
+    split_dir = os.path.join(data_dir, f"{k}-fold")
+
+    if not os.path.isdir(split_dir):
+        os.makedirs(split_dir)
+
+    split_path = os.path.join(split_dir, f"{fold}.npz")
+    if not os.path.isfile(split_path):
+        n = labels.shape[0]
+        x_idx = np.arange(n)
+        x_idx = np.random.permutation(x_idx)
+        labels = labels[x_idx]
+
+        skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
+
+        for fold_n, (train_idx, valid_idx) in enumerate(
+            skf.split(x_idx, labels)
+        ):
+            split_idx = {
+                "train": train_idx,
+                "valid": valid_idx,
+                "test": valid_idx,
+            }
+
+            # Check that all nodes/graph have been assigned to some split
+            assert np.all(
+                np.sort(
+                    np.array(
+                        split_idx["train"].tolist()
+                        + split_idx["valid"].tolist()
+                    )
+                )
+                == np.sort(np.arange(len(labels)))
+            ), "Not every sample has been loaded."
+            split_path = os.path.join(split_dir, f"{fold_n}.npz")
+
+            np.savez(split_path, **split_idx)
+
+    split_path = os.path.join(split_dir, f"{fold}.npz")
+    split_idx = np.load(split_path)
+
+    # Check that all nodes/graph have been assigned to some split
+    assert (
+        np.unique(
+            np.array(
+                split_idx["train"].tolist()
+                + split_idx["valid"].tolist()
+                + split_idx["test"].tolist()
+            )
+        ).shape[0]
+        == labels.shape[0]
+    ), "Not all nodes within splits"
+
+    return split_idx
+
+
+def random_splitting(labels, parameters, global_data_seed=42):
+    r"""Randomly splits label into train/valid/test splits.
+
+    Adapted from https://github.com/CUAI/Non-Homophily-Benchmarks.
+
+    Parameters
+    ----------
+    labels : torch.Tensor
+        Label tensor.
+    parameters : DictConfig
+        Configuration parameter.
+    global_data_seed : int
+        Seed for the random number generator.
+
+    Returns
+    -------
+    dict:
+        Dictionary containing the train, validation and test indices with keys "train", "valid", and "test".
+    """
+    fold = parameters["data_seed"]
+    data_dir = parameters["data_split_dir"]
+    train_prop = parameters["train_prop"]
+    valid_prop = (1 - train_prop) / 2
+
+    # Create split directory if it does not exist
+    split_dir = os.path.join(
+        data_dir, f"train_prop={train_prop}_global_seed={global_data_seed}"
+    )
+    generate_splits = False
+    if not os.path.isdir(split_dir):
+        os.makedirs(split_dir)
+        generate_splits = True
+
+    # Generate splits if they do not exist
+    if generate_splits:
+        # Set initial seed
+        torch.manual_seed(global_data_seed)
+        np.random.seed(global_data_seed)
+        # Generate a split
+        n = labels.shape[0]
+        train_num = int(n * train_prop)
+        valid_num = int(n * valid_prop)
+
+        # Generate 10 splits
+        for fold_n in range(10):
+            # Permute indices
+            perm = torch.as_tensor(np.random.permutation(n))
+
+            train_indices = perm[:train_num]
+            val_indices = perm[train_num : train_num + valid_num]
+            test_indices = perm[train_num + valid_num :]
+            split_idx = {
+                "train": train_indices,
+                "valid": val_indices,
+                "test": test_indices,
+            }
+
+            # Save generated split
+            split_path = os.path.join(split_dir, f"{fold_n}.npz")
+            np.savez(split_path, **split_idx)
+
+    # Load the split
+    split_path = os.path.join(split_dir, f"{fold}.npz")
+    split_idx = np.load(split_path)
+
+    # Check that all nodes/graph have been assigned to some split
+    assert (
+        np.unique(
+            np.array(
+                split_idx["train"].tolist()
+                + split_idx["valid"].tolist()
+                + split_idx["test"].tolist()
+            )
+        ).shape[0]
+        == labels.shape[0]
+    ), "Not all nodes within splits"
+
+    return split_idx
+
 
 
 def divide_train_val_test_split(dataset: PygGraphPropPredDataset, args):
@@ -270,6 +436,8 @@ def lift_topology(dataset, args):
         for i, d in enumerate(dataset):
             lift_fn = LIFTINGS[args.lifting](signed=args.signed, t=args.t, k=args.k)
             new_data = lift_fn(d)
+            n_with_matrices = select_neighborhoods_of_interest(new_data, args.topo_tune_neighboors)
+            new_data.update(n_with_matrices)
             for key, value in new_data.items():
                 if key.startswith("hodge_laplacian_"):
                     setattr(d, key,normalize_matrix(value, int(key[-1])))
@@ -325,6 +493,14 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
     Returns:
         A tuple containing the DataLoaders for the training, validation, and testing sets.
     """
+    data_split_config = {
+        "learning_setting": "transductive",
+        "data_split_dir": f"data/{dataset}",
+        "data_seed": random.randint(0,9),
+        "split_type": "random",  # 'k-fold' # either "k-fold" or "random" strategies
+        "k": 10,  # for "k-fold" Cross-Validation
+        "train_prop": 0.5  # for "random" strategy splitting
+    }
     if dataset == "karate":
         dataset = KarateClub()
         if args.lifting == "diffLifting":
@@ -341,28 +517,46 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
         dataset = Planetoid(root='data', name='cora', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
         if args.lifting == "diffLifting":
-            data = dataset[0]
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
         else:
-            data = lift_topology(dataset, args)[0]
+            dataset = lift_topology(dataset, args)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
 
     elif dataset=="Citeseer":
         dataset = Planetoid(root='data', name='CiteSeer', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
+
         if args.lifting == "diffLifting":
-            data = dataset[0]
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
+
         else:
-            data = lift_topology(dataset, args)[0]
+            dataset = lift_topology(dataset, args)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
 
     elif dataset=="Pubmed":
         dataset = Planetoid(root='data', name='pubmed', split="full", transform=T.NormalizeFeatures())
         if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
             dataset = add_positional_encoding(args, dataset)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
         if args.lifting == "diffLifting":
-            data = dataset[0]
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
         else:
-            data = lift_topology(dataset, args)[0]
+            dataset = lift_topology(dataset, args)
+            dataset_1 = load_transductive_splits(dataset, data_split_config, args)
+            data = dataset_1[0]
+
     elif dataset in COAUTHOR_DATASETS:
         dataset = Coauthor(root='data', name=dataset, transform=T.NormalizeFeatures())
 
@@ -384,13 +578,11 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
             if args.lifting == "diffLifting":
                 data = dataset[0]
             else:
-
                 data = lift_topology(dataset, args)[0]
-
-
             data.train_mask = data.train_mask[:, mask_nr]
             data.val_mask = data.val_mask[:, mask_nr]
             data.test_mask = data.test_mask[:, mask_nr]
+
         elif dataset in WIKIPEDIADatasets:
             dataset = WikipediaNetwork(root='data', name=dataset, transform=T.NormalizeFeatures())
             if args.gnn == "GPS" or args.sub_gccn_model == "GPS":
@@ -414,6 +606,59 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
 
     dataloaders = get_data_loaders([data], [data], [data])
     return dataloaders, dataset.num_features, dataset.num_classes
+
+
+def load_transductive_splits(dataset, parameters, args):
+    r"""Load the graph dataset with the specified split.
+
+    Parameters
+    ----------
+    dataset : torch_geometric.data.Dataset
+        Graph dataset.
+    parameters : DictConfig
+        Configuration parameters.
+
+    Returns
+    -------
+    list:
+        List containing the train, validation, and test splits.
+    """
+    # Extract labels from dataset object
+    assert len(dataset) == 1, (
+        "Dataset should have only one graph in a transductive setting."
+    )
+
+    data = dataset[0]
+    labels = data.y.numpy()
+
+    # Ensure labels are one dimensional array
+    assert len(labels.shape) == 1, "Labels should be one dimensional array"
+
+    if parameters.get("split_type") == "random":
+        splits = random_splitting(labels, parameters, args.seed)
+
+    elif parameters.get("split_type")  == "k-fold":
+        splits = k_fold_split(labels, parameters)
+
+    else:
+        raise NotImplementedError(
+            f"split_type {parameters.split_type} not valid. Choose either 'random' or 'k-fold'"
+        )
+
+    # Assign train val test masks to the graph
+    data.train_mask = torch.from_numpy(splits["train"])
+    data.val_mask = torch.from_numpy(splits["valid"])
+    data.test_mask = torch.from_numpy(splits["test"])
+
+    if parameters.get("standardize", False):
+        # Standardize the node features respecting train mask
+        data.x = (data.x - data.x[data.train_mask].mean(0)) / data.x[
+            data.train_mask
+        ].std(0)
+        data.y = (data.y - data.y[data.train_mask].mean(0)) / data.y[
+            data.train_mask
+        ].std(0)
+    return [data]
 
 def choose_dataset(args, device):
     """Chooses the appropriate dataset function based on the input data.

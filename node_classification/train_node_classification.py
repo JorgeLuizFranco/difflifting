@@ -11,12 +11,7 @@ def train_node(loader, model, loss_fn, optimizer, device):
         out = model(batch)
         loss = loss_fn(out[batch.train_mask], batch.y[batch.train_mask]) / batch.num_graphs
         loss.backward()
-        # # Verificação de gradientes com gradcheck (usado apenas com um batch pequeno ou exemplo)
-        # if batch.num_graphs == 1:  # Gradcheck funciona melhor com um exemplo por vez
-        #     batch.x = batch.x.requires_grad_()  # Certificando-se de que a entrada tenha requires_grad=True
-        #     # Certifique-se de que o modelo e o lote de entrada sejam compatíveis para o gradcheck
-        #     test = torch.autograd.gradcheck(model, batch, eps=1e-6, atol=1e-4)
-        #     print(test)
+
         # for name, param in model.named_parameters():
         #     if param.grad is not None:
         #         print(f"{name} gradient: {param.grad}")
@@ -28,7 +23,7 @@ def train_node(loader, model, loss_fn, optimizer, device):
     return total_loss / len(loader)
 
 @torch.no_grad()
-def evaluate_node(model, loader, loss_fn, device, mask,evaluator=None):
+def evaluate_node(model, loader, loss_fn, device, mask,evaluator=None, is_web_kb=False):
     model.eval()
     total_loss = 0
     accuracy = 0
@@ -44,6 +39,9 @@ def evaluate_node(model, loader, loss_fn, device, mask,evaluator=None):
         loss = loss_fn(out, batch.y[batch[mask]]) / batch.num_graphs
         total_loss += loss.item()
         pred = out.argmax(-1)
-        accuracy = pred.eq(batch.y[batch[mask]]).sum().item() / batch[mask].sum().item()
+        if is_web_kb:
+            accuracy = pred.eq(batch.y[batch[mask]]).sum().item() / batch[mask].sum().item()
+        else:
+            accuracy = pred.eq(batch.y[batch[mask]]).sum().item() / batch[mask].shape[0]
 
     return total_loss / len(loader), accuracy

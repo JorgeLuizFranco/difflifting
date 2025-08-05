@@ -23,7 +23,7 @@ class CellCycleLifting(Graph2CellLifting):
     def __init__(self, max_cell_length=None, **kwargs):
         super().__init__(**kwargs)
         self.complex_dim = 2
-        self.max_cell_length = max_cell_length
+        self.max_cell_length = 18
 
     def lift_topology(self, data: torch_geometric.data.Data) -> dict:
         r"""Find the cycles of a graph and lifts them to 2-cells.

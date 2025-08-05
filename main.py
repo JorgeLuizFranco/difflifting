@@ -49,11 +49,11 @@ if __name__ == '__main__':
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-
+    is_web_kb = True if args.dataset == "Texas" or args.dataset == "Wisconsin" else False
     def train_eval(model, loss_fn, optimizer, evaluator, epoch, device):
         train_loss = train_node(train_loader, model, loss_fn, optimizer, device)
-        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",evaluator)
-        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", evaluator)
+        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",evaluator, is_web_kb)
+        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", evaluator, is_web_kb)
         return train_loss, val_loss, val_acc, test_loss, test_acc
 
 

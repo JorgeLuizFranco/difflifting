@@ -16,6 +16,7 @@ from model.TNN import TNN
 
 from preprocessing.preprocessing import remove_duplicate_edges, remove_duplicate_edges_for_nodes_dataset
 from tools.feature_lifting.projection_sum import ProjectionSum
+from tools.lifting.utils import select_neighborhoods_of_interest
 from tools.redout import DirectReadout
 from tools.redout import PropagateSignalDown
 from torch_geometric.data import Data
@@ -244,7 +245,7 @@ class TNN_KNN_MLP_N(nn.Module):
         self.k = k
         self.k_min = 2
         self.k_max = k_max
-
+        self.args = args
         self.triangle_count = 0  # Add this to track triangles
         self.diff_lifting = diff_lifting
         self.tnn_type = tnn_type
@@ -256,7 +257,7 @@ class TNN_KNN_MLP_N(nn.Module):
             if diff_lifting:
                 hidden_dim = embedding_dim
         self.feature_encoder = AllCellFeatureEncoder(in_channels=[in_channels, in_channels, in_channels], out_channels=hidden_dim,
-                                                    proj_dropout=0.5)
+                                                    proj_dropout=0.3)
         if diff_lifting:
 
             if args.gnn == "GIN":
@@ -304,7 +305,7 @@ class TNN_KNN_MLP_N(nn.Module):
             device=device,
             sub_gccn=args.sub_gccn_model,
             sub_gccn_layers=args.sub_gccn_model_n_layers,
-           # neighboors=args.topo_tune_neighboors,
+           neighboors=args.topo_tune_neighboors,
             # graph_classific=False
         )
 
@@ -335,22 +336,22 @@ class TNN_KNN_MLP_N(nn.Module):
             size=(data.x_0.shape[0], data.x_0.shape[0])
         )
 
-        data.laplacian_up_0 = laplacian_0
-        data.laplacian_up_1 = torch.spmm(data_for_lifting["incidence_2"],
+        data.up_laplacian_0 = laplacian_0
+        data.up_laplacian_1 = torch.spmm(data_for_lifting["incidence_2"],
                                          data_for_lifting["incidence_2"].T).to_sparse_coo()
-        data.laplacian_down_1 = torch.spmm(data_for_lifting["incidence_1"].T,
+        data.down_laplacian_1 = torch.spmm(data_for_lifting["incidence_1"].T,
                                            data_for_lifting["incidence_1"]).to_sparse_coo()
 
-        data.laplacian_down_2 = torch.spmm(data_for_lifting["incidence_2"].T,
+        data.down_laplacian_2 = torch.spmm(data_for_lifting["incidence_2"].T,
                                            data_for_lifting["incidence_2"]).to_sparse_coo()
         data.node_edge_matrix = incidence_matrix_1
 
         data.incidence_1 = data_for_lifting.get("incidence_1")
         data.incidence_2 = data_for_lifting.get("incidence_2")
 
-        data.hodge_laplacian_0 = data.laplacian_up_0  # + data.laplacian_down_0
-        data.hodge_laplacian_1 = data.laplacian_up_1 + data.laplacian_down_1
-        data.hodge_laplacian_2 = data.laplacian_down_2
+        data.hodge_laplacian_0 = data.up_laplacian_0  # + data.laplacian_down_0
+        data.hodge_laplacian_1 = data.up_laplacian_1 + data.down_laplacian_1
+        data.hodge_laplacian_2 = data.down_laplacian_2
         return data
 
     def forward(self, batch):
@@ -724,7 +725,7 @@ class TNN_KNN_MLP_N(nn.Module):
                 data_for_lifting = {}
                 x_featured = self.feature_encoder(data)
                 data_for_lifting = {
-                    "x_0": embeddings,  # Node features
+                    "x_0": x_featured.x_0,  # Node features
                     "incidence_1": incidence_matrix_1,  # Node-to-edge incidence matrix
                     "incidence_2": incidence_matrix_2,  # edge_to-triangle
                     "adjacency_1": A,
@@ -737,11 +738,13 @@ class TNN_KNN_MLP_N(nn.Module):
                 lifted_data["adjacency_1"] = A
                 # print(lifted_data)
                 lifted_data["x_0"] = torch.div(lifted_data["x_0"], torch.max(self.k_v))
-                lifted_data["cell_statistics"] = cycles
+                lifted_data["cell_statistics"] = torch.Tensor([[ incidence_matrix_1.shape[0],incidence_matrix_1.shape[1],incidence_matrix_2.shape[1]]]).long()
                 lifted_data["pe"] = data.get("pe")
 
                 lifted_data_obj = Data(**lifted_data)
                 lifted_data_obj = self.__create_laplacians(lifted_data_obj, incidence_matrix_1, data_for_lifting)
+                n_with_matrices = select_neighborhoods_of_interest(lifted_data_obj, self.args.topo_tune_neighboors)
+                lifted_data_obj.update(n_with_matrices)
 
                 tnn_output = self.tnn(lifted_data_obj)
 

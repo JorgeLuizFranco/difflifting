@@ -32,7 +32,7 @@ def get_routes_from_neighborhoods(neighborhoods):
     """
     routes = []
     for neighborhood in neighborhoods:
-        split = neighborhood.split("_")
+        split = neighborhood.split("-")
         src_rank = int(split[-1])
         r = int(split[0]) if len(split) == 3 else 1
         route = (
@@ -42,7 +42,7 @@ def get_routes_from_neighborhoods(neighborhoods):
         )
         routes.append(route)
     return routes
-
+#
 class TopoTune(torch.nn.Module):
     """Tunes a GNN model using higher-order relations.
 
@@ -91,30 +91,353 @@ class TopoTune(torch.nn.Module):
 
         self.hidden_channels = GNN.hidden_channels
         self.out_channels = GNN.out_channels
+#
+#     def apply_positional_encoding(self, data: Data, pe_rank=1) -> Data:
+#         attr_name = f"pe_{pe_rank}"
+#         adjacency = data.get(f"adjacency_{pe_rank}")
+#         if adjacency is None:
+#             raise ValueError(f"Adjacency adjacency_{pe_rank} is not present in the data.")
+#
+#         edge_index = to_edge_index(adjacency)[0]
+#         data.edge_index = edge_index
+#
+#
+#         data.num_nodes = getattr(data, f"x_{pe_rank}").shape[0]
+#
+#         pe_transform = AddRandomWalkPE(walk_length=20, attr_name=attr_name)
+#         data = pe_transform(data)
+#
+#
+#         pe = getattr(data, attr_name)
+#         if pe.shape[0] != data.num_nodes:
+#             print(f"[WARN] PE shape mismatch after PE: {pe.shape} vs expected {data.num_nodes}")
+#             pe = F.pad(pe, (0, 0, 0, data.num_nodes - pe.shape[0]))
+#             setattr(data, attr_name, pe)
+#
+#         return data
+#     def get_nbhd_cache(self, params):
+#         """Cache the nbhd information into a dict for the complex at hand.
+#
+#         Parameters
+#         ----------
+#         params : dict
+#             The parameters of the batch, containing the complex.
+#
+#         Returns
+#         -------
+#         dict
+#             The neighborhood cache.
+#         """
+#         nbhd_cache = {}
+#         for neighborhood, route in zip(
+#             self.neighborhoods, self.routes, strict=False
+#         ):
+#             src_rank, dst_rank = route
+#             if src_rank != dst_rank and (src_rank, dst_rank) not in nbhd_cache:
+#                 n_dst_nodes = getattr(params, f"x_{dst_rank}").shape[0]
+#                 if src_rank > dst_rank:
+#                     boundary = getattr(params, neighborhood[2:]).coalesce()
+#                     nbhd_cache[(src_rank, dst_rank)] = (
+#                         interrank_boundary_index(
+#                             getattr(params, f"x_{src_rank}"),
+#                             boundary.indices(),
+#                             n_dst_nodes,
+#                         )
+#                     )
+#                 elif src_rank < dst_rank:
+#                     coboundary = params.get(neighborhood[2:]).coalesce()#getattr(params, neighborhood).coalesce()
+#                     nbhd_cache[(src_rank, dst_rank)] = (
+#                         interrank_boundary_index(
+#                             getattr(params, f"x_{src_rank}"),
+#                             coboundary.indices(),
+#                             n_dst_nodes,
+#                         )
+#                     )
+#         return nbhd_cache
+#
+#     def intrarank_expand(self, params, src_rank, nbhd):
+#         """Expand the complex into an intrarank Hasse graph.
+#
+#         Parameters
+#         ----------
+#         params : dict
+#             The parameters of the batch, containting the complex.
+#         src_rank : int
+#             The source rank.
+#         nbhd : str
+#             The neighborhood to use.
+#
+#         Returns
+#         -------
+#         torch_geometric.data.Data
+#             The expanded batch of intrarank Hasse graphs for this route.
+#         """
+#         batch_route = Data(
+#             x=getattr(params, f"x_{src_rank}"),
+#             edge_index=getattr(params, nbhd).indices(),
+#             edge_weight=getattr(params, nbhd).values().squeeze(),
+#             edge_attr=getattr(params, nbhd).values().squeeze(),
+#             requires_grad=True,
+#         )
+#
+#         return batch_route
+#
+#     def intrarank_gnn_forward(self, batch_route, layer_idx, route_index):
+#         """Forward pass of the GNN (one layer) for an intrarank Hasse graph.
+#
+#         Parameters
+#         ----------
+#         batch_route : torch_geometric.data.Data
+#             The batch of intrarank Hasse graphs for this route.
+#         layer_idx : int
+#             The index of the TopoTune layer.
+#         route_index : int
+#             The index of the route.
+#
+#         Returns
+#         -------
+#         torch.tensor
+#             The output of the GNN (updated features).
+#         """
+#         if batch_route.x.shape[0] < 2:
+#             return batch_route.x
+#         out = self.graph_routes[layer_idx][route_index](
+#             batch_route.x,
+#             batch_route.edge_index,
+#             #    batch_route.edge_weight, # TODO Mathilde : some gnns take edge_weight (1d) and some take edge_attr.
+#             #    batch_route.edge_attr,
+#         )
+#         return out
+#
+#     def interrank_expand(
+#         self, params, src_rank, dst_rank, nbhd_cache, membership
+#     ):
+#         """Expand the complex into an interrank Hasse graph.
+#
+#         Parameters
+#         ----------
+#         params : dict
+#             The parameters of the batch, containting the complex.
+#         src_rank : int
+#             The source rank.
+#         dst_rank : int
+#             The destination rank.
+#         nbhd_cache : dict
+#             The neighborhood cache containing the expanded boundary index and edge attributes.
+#         membership : dict
+#             The batch membership of the graphs per rank.
+#
+#         Returns
+#         -------
+#         torch_geometric.data.Data
+#             The expanded batch of interrank Hasse graphs for this route.
+#         """
+#         src_batch = membership[src_rank]
+#         dst_batch = membership[dst_rank]
+#         edge_index, edge_attr = nbhd_cache
+#         device = getattr(params, f"x_{src_rank}").device
+#         feat_on_dst = torch.zeros_like(getattr(params, f"x_{dst_rank}"))
+#
+#         x_in = torch.vstack([feat_on_dst, getattr(params, f"x_{src_rank}")])
+#         batch_expanded = torch.cat([torch.tensor(dst_batch), torch.tensor(src_batch)], dim=0)
+#
+#
+#         if self.gnn_type == "GPS":
+#             pe_on_dst = torch.zeros_like(getattr(params, f"pe_{dst_rank}"))
+#             pe_in = torch.vstack([pe_on_dst, getattr(params, f"pe_{src_rank}")])
+#             # batch_route = Data(
+#             #     x=getattr(params, f"x_{src_rank}"),
+#             #     edge_index=getattr(params, nbhd).indices(),
+#             #     edge_weight=getattr(params, nbhd).values().squeeze(),
+#             #     edge_attr=getattr(params, nbhd).values().squeeze(),
+#             #     requires_grad=True,  # Certifique-se de que isso seja aplicado
+#             # )
+#             batch_route = Data(
+#                 x=x_in,
+#                 edge_index=edge_index.to(device),
+#                 edge_attr=edge_attr.to(device),
+#                 edge_weight=edge_attr.to(device),
+#                 batch=batch_expanded.to(device),
+#                 pe=pe_in.to(device),
+#                 requires_grad=True,
+#             )
+#
+#         else:
+#
+#             batch_route = Data(
+#                 x=x_in,
+#                 edge_index=edge_index.to(device),
+#                 edge_attr=edge_attr.to(device),
+#                 edge_weight=edge_attr.to(device),
+#                 batch=batch_expanded.to(device),
+#                 requires_grad=True,
+#             )
+#
+#         return batch_route
+#
+#     def interrank_gnn_forward(
+#         self, batch_route, layer_idx, route_index, n_dst_cells
+#     ):
+#         """Forward pass of the GNN (one layer) for an interrank Hasse graph.
+#
+#         Parameters
+#         ----------
+#         batch_route : torch_geometric.data.Data
+#             The batch of interrank Hasse graphs for this route.
+#         layer_idx : int
+#             The index of the layer.
+#         route_index : int
+#             The index of the route.
+#         n_dst_cells : int
+#             The number of destination cells in the whole batch.
+#
+#         Returns
+#         -------
+#         torch.tensor
+#             The output of the GNN (updated features).
+#         """
+#         if self.gnn_type=="GIN" or self.gnn_type=="GPS":
+#             expanded_out = self.graph_routes[layer_idx][route_index](
+#                 batch_route
+#                 #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+#                 #    batch_route.edge_attr,
+#             )
+#         else:
+#             expanded_out = self.graph_routes[layer_idx][route_index](
+#                 batch_route.x,
+#                 batch_route.edge_index,
+#                 #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+#                 #    batch_route.edge_attr,
+#             )
+#         out = expanded_out[:n_dst_cells]
+#         return out
+#
+#     def aggregate_inter_nbhd(self, x_out_per_route):
+#         """Aggregate the outputs of the GNN for each rank.
+#
+#         While the GNN takes care of intra-nbhd aggregation,
+#         this will take care of inter-nbhd aggregation.
+#         Default: sum.
+#
+#         Parameters
+#         ----------
+#         x_out_per_route : dict
+#             The outputs of the GNN for each route.
+#
+#         Returns
+#         -------
+#         dict
+#             The aggregated outputs of the GNN for each rank.
+#         """
+#         x_out_per_rank = {}
+#         for route_index, (_, dst_rank) in enumerate(self.routes):
+#             if dst_rank not in x_out_per_rank:
+#                 x_out_per_rank[dst_rank] = x_out_per_route[route_index]
+#             else:
+#                 x_out_per_rank[dst_rank] = x_out_per_rank[dst_rank]+ x_out_per_route[route_index]
+#         return x_out_per_rank
+#
+#     def generate_membership_vectors(self, batch: Data):
+#         """Generate membership vectors based on batch.cell_statistics.
+#
+#         Parameters
+#         ----------
+#         batch : torch_geometric.data.Data
+#             Batch object containing the batched domain data.
+#
+#         Returns
+#         -------
+#         dict
+#             The batch membership of the graphs per rank.
+#         """
+#         if isinstance(batch.cell_statistics, list):
+#             # Caso seja uma lista de listas, a dimensão máxima será o comprimento da maior lista
+#             max_dim = len(max(batch.get("cell_statistics")))
+#         else:
+#             max_dim = batch.cell_statistics.shape[1]
+#
+#         cell_statistics = batch.cell_statistics
+#         # membership = {
+#         #     j: [
+#         #         [i] * x for i, x in enumerate(cell_statistics[:, j])  # Lista de listas
+#         #     ]
+#         #     for j in range(max_dim)
+#         # }
+#         membership = {
+#             j: [
+#                 [i] * x for i, x in enumerate([len(sublist) for sublist in zip(*cell_statistics)])
+#                 # Criando lista de listas
+#             ]
+#             for j in range(max_dim)
+#         }
+#
+#         return membership
+#
+#     def forward(self, batch):
+#         """Forward pass of the model.
+#
+#         Parameters
+#         ----------
+#         batch : Complex or ComplexBatch(Complex)
+#             The input data.
+#
+#         Returns
+#         -------
+#         dict
+#             The output hidden states of the model per rank.
+#         """
+#         act = get_activation(self.activation)
+#
+#         nbhd_cache = self.get_nbhd_cache(batch)
+#         membership = self.generate_membership_vectors(batch)
+#
+#
+#         x_out_per_route = {}
+#         for layer_idx in range(self.layers):
+#             for route_index, route in enumerate(self.routes):
+#                 src_rank, dst_rank = route
+#                 if self.gnn_type == "GPS":
+#                     for rank in [src_rank, dst_rank]:
+#                         batch = self.apply_positional_encoding(batch, pe_rank=rank)
+#                 if src_rank == dst_rank:
+#                     nbhd = self.neighborhoods[route_index]
+#                     batch_route = self.intrarank_expand(batch, src_rank, nbhd)
+#                     x_out = self.intrarank_gnn_forward(
+#                         batch_route, layer_idx, route_index
+#                     )
+#
+#                     x_out_per_route[route_index] = x_out
+#
+#                 elif src_rank != dst_rank:
+#                     nbhd = nbhd_cache[(src_rank, dst_rank)]
+#
+#                     batch_route = self.interrank_expand(
+#                         batch, src_rank, dst_rank, nbhd, membership
+#                     )
+#                     x_out = self.interrank_gnn_forward(
+#                         batch_route,
+#                         layer_idx,
+#                         route_index,
+#                         getattr(batch, f"x_{dst_rank}").shape[0],
+#                     )
+#
+#                     x_out_per_route[route_index] = x_out
+#
+#             # aggregate across neighborhoods
+#             x_out_per_rank = self.aggregate_inter_nbhd(x_out_per_route)
+#
+#             # update and replace the features for next layer
+#             for rank in x_out_per_rank:
+#                 x_out_per_rank[rank] = act(x_out_per_rank[rank])
+#                 setattr(batch, f"x_{rank}", x_out_per_rank[rank])
+#
+#         for rank in range(self.max_rank + 1):
+#             if rank not in x_out_per_rank:
+#                 x_out_per_rank[rank] = getattr(batch, f"x_{rank}")
+#
+#         return x_out_per_rank
 
-    def apply_positional_encoding(self, data: Data, pe_rank=1) -> Data:
-        attr_name = f"pe_{pe_rank}"
-        adjacency = data.get(f"adjacency_{pe_rank}")
-        if adjacency is None:
-            raise ValueError(f"Adjacency adjacency_{pe_rank} is not present in the data.")
 
-        edge_index = to_edge_index(adjacency)[0]
-        data.edge_index = edge_index
-
-
-        data.num_nodes = getattr(data, f"x_{pe_rank}").shape[0]
-
-        pe_transform = AddRandomWalkPE(walk_length=20, attr_name=attr_name)
-        data = pe_transform(data)
-
-
-        pe = getattr(data, attr_name)
-        if pe.shape[0] != data.num_nodes:
-            print(f"[WARN] PE shape mismatch after PE: {pe.shape} vs expected {data.num_nodes}")
-            pe = F.pad(pe, (0, 0, 0, data.num_nodes - pe.shape[0]))
-            setattr(data, attr_name, pe)
-
-        return data
     def get_nbhd_cache(self, params):
         """Cache the nbhd information into a dict for the complex at hand.
 
@@ -136,7 +459,7 @@ class TopoTune(torch.nn.Module):
             if src_rank != dst_rank and (src_rank, dst_rank) not in nbhd_cache:
                 n_dst_nodes = getattr(params, f"x_{dst_rank}").shape[0]
                 if src_rank > dst_rank:
-                    boundary = getattr(params, neighborhood[2:]).coalesce()
+                    boundary = getattr(params, neighborhood).coalesce()
                     nbhd_cache[(src_rank, dst_rank)] = (
                         interrank_boundary_index(
                             getattr(params, f"x_{src_rank}"),
@@ -145,7 +468,7 @@ class TopoTune(torch.nn.Module):
                         )
                     )
                 elif src_rank < dst_rank:
-                    coboundary = params.get(neighborhood[2:]).coalesce()#getattr(params, neighborhood).coalesce()
+                    coboundary = getattr(params, neighborhood).coalesce()
                     nbhd_cache[(src_rank, dst_rank)] = (
                         interrank_boundary_index(
                             getattr(params, f"x_{src_rank}"),
@@ -237,41 +560,16 @@ class TopoTune(torch.nn.Module):
         edge_index, edge_attr = nbhd_cache
         device = getattr(params, f"x_{src_rank}").device
         feat_on_dst = torch.zeros_like(getattr(params, f"x_{dst_rank}"))
-
         x_in = torch.vstack([feat_on_dst, getattr(params, f"x_{src_rank}")])
-        batch_expanded = torch.cat([torch.tensor(dst_batch), torch.tensor(src_batch)], dim=0)
+        batch_expanded = torch.cat([dst_batch, src_batch], dim=0)
 
-
-        if self.gnn_type == "GPS":
-            pe_on_dst = torch.zeros_like(getattr(params, f"pe_{dst_rank}"))
-            pe_in = torch.vstack([pe_on_dst, getattr(params, f"pe_{src_rank}")])
-            # batch_route = Data(
-            #     x=getattr(params, f"x_{src_rank}"),
-            #     edge_index=getattr(params, nbhd).indices(),
-            #     edge_weight=getattr(params, nbhd).values().squeeze(),
-            #     edge_attr=getattr(params, nbhd).values().squeeze(),
-            #     requires_grad=True,  # Certifique-se de que isso seja aplicado
-            # )
-            batch_route = Data(
-                x=x_in,
-                edge_index=edge_index.to(device),
-                edge_attr=edge_attr.to(device),
-                edge_weight=edge_attr.to(device),
-                batch=batch_expanded.to(device),
-                pe=pe_in.to(device),
-                requires_grad=True,
-            )
-
-        else:
-
-            batch_route = Data(
-                x=x_in,
-                edge_index=edge_index.to(device),
-                edge_attr=edge_attr.to(device),
-                edge_weight=edge_attr.to(device),
-                batch=batch_expanded.to(device),
-                requires_grad=True,
-            )
+        batch_route = Data(
+            x=x_in,
+            edge_index=edge_index.to(device),
+            edge_attr=edge_attr.to(device),
+            edge_weight=edge_attr.to(device),
+            batch=batch_expanded.to(device),
+        )
 
         return batch_route
 
@@ -296,19 +594,12 @@ class TopoTune(torch.nn.Module):
         torch.tensor
             The output of the GNN (updated features).
         """
-        if self.gnn_type=="GIN" or self.gnn_type=="GPS":
-            expanded_out = self.graph_routes[layer_idx][route_index](
-                batch_route
-                #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
-                #    batch_route.edge_attr,
-            )
-        else:
-            expanded_out = self.graph_routes[layer_idx][route_index](
-                batch_route.x,
-                batch_route.edge_index,
-                #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
-                #    batch_route.edge_attr,
-            )
+        expanded_out = self.graph_routes[layer_idx][route_index](
+            batch_route.x,
+            batch_route.edge_index,
+            #    batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+            #    batch_route.edge_attr,
+        )
         out = expanded_out[:n_dst_cells]
         return out
 
@@ -334,7 +625,7 @@ class TopoTune(torch.nn.Module):
             if dst_rank not in x_out_per_rank:
                 x_out_per_rank[dst_rank] = x_out_per_route[route_index]
             else:
-                x_out_per_rank[dst_rank] = x_out_per_rank[dst_rank]+ x_out_per_route[route_index]
+                x_out_per_rank[dst_rank] += x_out_per_route[route_index]
         return x_out_per_rank
 
     def generate_membership_vectors(self, batch: Data):
@@ -350,27 +641,20 @@ class TopoTune(torch.nn.Module):
         dict
             The batch membership of the graphs per rank.
         """
-        if isinstance(batch.cell_statistics, list):
-            # Caso seja uma lista de listas, a dimensão máxima será o comprimento da maior lista
-            max_dim = len(max(batch.get("cell_statistics")))
-        else:
-            max_dim = batch.cell_statistics.shape[1]
-
+        max_dim = batch.cell_statistics.shape[1]
         cell_statistics = batch.cell_statistics
-        # membership = {
-        #     j: [
-        #         [i] * x for i, x in enumerate(cell_statistics[:, j])  # Lista de listas
-        #     ]
-        #     for j in range(max_dim)
-        # }
         membership = {
-            j: [
-                [i] * x for i, x in enumerate([len(sublist) for sublist in zip(*cell_statistics)])
-                # Criando lista de listas
-            ]
+            j: torch.tensor(
+                [
+                    elem
+                    for list in [
+                        [i] * x for i, x in enumerate(cell_statistics[:, j])
+                    ]
+                    for elem in list
+                ]
+            )
             for j in range(max_dim)
         }
-
         return membership
 
     def forward(self, batch):
@@ -391,14 +675,11 @@ class TopoTune(torch.nn.Module):
         nbhd_cache = self.get_nbhd_cache(batch)
         membership = self.generate_membership_vectors(batch)
 
-
         x_out_per_route = {}
         for layer_idx in range(self.layers):
             for route_index, route in enumerate(self.routes):
                 src_rank, dst_rank = route
-                if self.gnn_type == "GPS":
-                    for rank in [src_rank, dst_rank]:
-                        batch = self.apply_positional_encoding(batch, pe_rank=rank)
+
                 if src_rank == dst_rank:
                     nbhd = self.neighborhoods[route_index]
                     batch_route = self.intrarank_expand(batch, src_rank, nbhd)
@@ -436,7 +717,6 @@ class TopoTune(torch.nn.Module):
                 x_out_per_rank[rank] = getattr(batch, f"x_{rank}")
 
         return x_out_per_rank
-
 
 def interrank_boundary_index(x_src, boundary_index, n_dst_nodes):
     """
@@ -525,3 +805,333 @@ def get_activation(nonlinearity, return_module=False):
     if return_module:
         return module
     return function
+
+
+class TopoTune_OneHasse(torch.nn.Module):
+    """Tunes a GNN model using higher-order relations.
+
+    This class takes a GNN and its kwargs as inputs, and tunes it with specified additional relations.
+    Unlike the case of TopoTune, this class expects a single Hasse graph as input, where all
+    higher-order neighborhoods are represented as a single adjacency matrix.
+
+    Parameters
+    ----------
+    GNN : torch.nn.Module, a class not an object
+        The GNN class to use. ex: GAT, GCN.
+    neighborhoods : list of lists
+        The neighborhoods of interest.
+    layers : int
+        The number of layers to use. Each layer contains one GNN.
+    use_edge_attr : bool
+        Whether to use edge attributes.
+    activation : str
+        The activation function to use. ex: 'relu', 'tanh', 'sigmoid'.
+    """
+
+    def __init__(
+        self,
+        GNN,
+        neighborhoods,
+        layers,
+        use_edge_attr,
+        activation,
+    ):
+        super().__init__()
+        self.routes = get_routes_from_neighborhoods(neighborhoods)
+        self.neighborhoods = neighborhoods
+
+        self.layers = layers
+        self.use_edge_attr = use_edge_attr
+        self.max_rank = 2
+        self.graph_routes = torch.nn.ModuleList()
+        self.GNN = [i for i in GNN.named_modules()]
+        self.activation = activation
+
+        # Instantiate GNN layers
+        for _ in range(self.layers):
+            self.graph_routes.append(copy.deepcopy(GNN))
+
+        self.hidden_channels = GNN.hidden_channels
+        self.out_channels = GNN.out_channels
+
+    def all_nbhds_expand(self, params, membership):
+        """Expand the complex into a single Hasse graph which contains all ranks and all nbhd.
+
+        Parameters
+        ----------
+        params : dict
+            The parameters of the batch, containing the complex.
+        membership : dict
+            The batch membership of the graphs per rank.
+
+        Returns
+        -------
+        torch_geometric.data.Data
+            The expanded Hasse graph.
+        """
+
+        device = params.x_0.device
+
+        x = torch.cat(
+            [getattr(params, f"x_{i}") for i in range(self.max_rank + 1)],
+            dim=0,
+        ).to(device)
+
+        max_node_id = params.x_0.shape[0]
+        max_edge_id = params.x_1.shape[0]
+
+        edge_indices = []
+        edge_attrs = []
+
+        for route, neighborhood in zip(
+            self.routes, self.neighborhoods, strict=False
+        ):
+            src_rank, dst_rank = route
+
+            if (
+                "up_laplacian" in neighborhood
+                or "up_adjacency" in neighborhood
+            ):
+                if src_rank == 0:  # node-to-edge
+                    adjustment = torch.tensor([[0], [0]]).to(device)
+                elif src_rank == 1:  # edge-to-face
+                    adjustment = torch.tensor(
+                        [[max_node_id], [max_node_id]]
+                    ).to(device)
+                else:
+                    raise ValueError(
+                        f"Unsupported src_rank for 'up' neighborhood: {src_rank}"
+                    )
+
+                edge_indices.append(
+                    getattr(params, neighborhood).coalesce().indices().to(device)
+                    + adjustment
+                )
+                edge_attrs.append(
+                    getattr(params, neighborhood).coalesce().values().squeeze()
+                )
+
+            elif (
+                "down_laplacian" in neighborhood
+                or "down_adjacency" in neighborhood
+            ):
+                if src_rank == 1:  # edge-to-node
+                    adjustment = torch.tensor(
+                        [[max_node_id], [max_node_id]]
+                    ).to(device)
+                elif src_rank == 2:  # face-to-edge
+                    adjustment = torch.tensor(
+                        [
+                            [max_node_id + max_edge_id],
+                            [max_node_id + max_edge_id],
+                        ]
+                    ).to(device)
+                else:
+                    raise ValueError(
+                        f"Unsupported src_rank for 'down' neighborhood: {src_rank}"
+                    )
+
+                edge_indices.append(
+                    getattr(params, neighborhood).indices().to(device)
+                    + adjustment
+                )
+                edge_attrs.append(
+                    getattr(params, neighborhood).values().squeeze()
+                )
+
+            elif "down_incidence" in neighborhood:
+                if src_rank == 1:  # edge-to-face
+                    adjustment = torch.tensor([[0], [max_node_id]]).to(device)
+                elif src_rank == 2:  # face-to-edge
+                    adjustment = torch.tensor(
+                        [[max_node_id], [max_node_id + max_edge_id]]
+                    ).to(device)
+                else:
+                    raise ValueError(
+                        f"Unsupported src_rank for 'down_incidence' neighborhood: {src_rank}"
+                    )
+
+                edge_indices.append(
+                    getattr(params, neighborhood)
+                    .coalesce()
+                    .indices()
+                    .to(device)
+                    + adjustment
+                )
+                edge_attrs.append(
+                    getattr(params, neighborhood).coalesce().values().squeeze()
+                )
+
+            elif "up_incidence" in neighborhood:
+                if src_rank == 0:  # node-to-edge
+                    adjustment = torch.tensor([[max_node_id], [0]]).to(device)
+                elif src_rank == 1:  # edge-to-face
+                    adjustment = torch.tensor(
+                        [[max_node_id + max_edge_id], [max_node_id]]
+                    ).to(device)
+                else:
+                    raise ValueError(
+                        f"Unsupported src_rank for 'up_incidence' neighborhood: {src_rank}"
+                    )
+                coincidence_indices = (
+                    getattr(params, neighborhood)
+                    .T.coalesce()
+                    .indices()
+                    .to(device)
+                    + adjustment
+                )
+
+                edge_indices.append(coincidence_indices)
+                # edge_attrs.append(
+                #     getattr(params, neighborhood)
+                #     .T.coalesce()
+                #     .values()
+                #     .squeeze()
+                # )
+
+        edge_index = torch.cat(edge_indices, dim=1)
+        # edge_attr = torch.cat(edge_attrs, dim=0)
+
+        batch_expanded = torch.cat(
+            [membership[0], membership[1], membership[2]], dim=0
+        ).to(device)
+
+        return Data(
+            x=x,
+            edge_index=edge_index,
+            # edge_attr=edge_attr,
+            batch=batch_expanded,
+        )
+
+    def all_nbhds_gnn_forward(
+        self,
+        batch_route,
+        layer_idx,
+    ):
+        """Forward pass of the GNN (one layer) for an intrarank Hasse graph.
+
+        Parameters
+        ----------
+        batch_route : torch_geometric.data.Data
+            The batch of intrarank Hasse graphs for this route.
+        layer_idx : int
+            The index of the TopoTune layer.
+
+        Returns
+        -------
+        torch.tensor
+            The output of the GNN (updated features).
+        """
+        out = self.graph_routes[layer_idx](
+            batch_route.x,
+            batch_route.edge_index,
+               # batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+               # batch_route.edge_attr,
+        )
+        return out
+
+    def aggregate_inter_nbhd(self, x_out):
+        """Aggregate the outputs of the GNN for each rank.
+
+        While the GNN takes care of intra-nbhd aggregation,
+        this will take care of inter-nbhd aggregation.
+        Default: sum.
+
+        Parameters
+        ----------
+        x_out : torch.tensor
+            The output of the GNN, concatenated features of each rank.
+
+        Returns
+        -------
+        dict
+            The aggregated outputs of the GNN for each rank.
+        """
+        x_out_per_rank = {}
+        start_idx = 0
+        for rank in range(self.max_rank + 1):
+            rank_size = self.membership[rank].shape[0]
+            end_idx = start_idx + rank_size
+            if end_idx > x_out.shape[0]:
+                raise IndexError(
+                    f"End index {end_idx} out of bounds for x_out with shape {x_out.shape[0]}"
+                )
+            x_out_per_rank[rank] = x_out[start_idx:end_idx]
+            start_idx = end_idx
+        return x_out_per_rank
+
+    def generate_membership_vectors(self, batch: Data):
+        """Generate membership vectors based on batch.cell_statistics.
+
+        Parameters
+        ----------
+        batch : torch_geometric.data.Data
+            Batch object containing the batched domain data.
+
+        Returns
+        -------
+        dict
+            The batch membership of the graphs per rank.
+        """
+        max_dim = batch.cell_statistics.shape[1]
+
+        cell_statistics = batch.cell_statistics
+        membership = {
+            j: torch.tensor(
+                [
+                    elem
+                    for list in [
+                        [i] * x for i, x in enumerate(cell_statistics[:, j])
+                    ]
+                    for elem in list
+                ]
+            )
+            for j in range(max_dim)
+        }
+
+        return membership
+
+    def forward(self, batch):
+        """Forward pass of the model.
+
+        Parameters
+        ----------
+        batch : Complex or ComplexBatch(Complex)
+            The input data.
+
+        Returns
+        -------
+        dict
+            The output hidden states of the model per rank.
+        """
+        act = get_activation(self.activation)
+
+        self.membership = self.generate_membership_vectors(batch)
+        if batch.x_2.shape[0] == 0:
+            x_out_per_rank = {}
+            x_out_per_rank[0] = batch.x_0
+            x_out_per_rank[1] = batch.x_1
+            x_out_per_rank[2] = batch.x_2
+            return x_out_per_rank
+
+        for layer_idx in range(self.layers):
+            batch_route = self.all_nbhds_expand(batch, self.membership)
+            x_out = self.all_nbhds_gnn_forward(
+                batch_route,
+                layer_idx,
+            )
+
+            # aggregate across neighborhoods
+            x_out_per_rank = self.aggregate_inter_nbhd(x_out)
+
+            # update and replace the features for next layer
+            for rank in x_out_per_rank:
+                x_out_per_rank[rank] = act(x_out_per_rank[rank])
+                setattr(batch, f"x_{rank}", x_out_per_rank[rank])
+
+        for rank in range(self.max_rank + 1):
+            if rank not in x_out_per_rank:
+                x_out_per_rank[rank] = getattr(batch, f"x_{rank}")
+
+        return x_out_per_rank
+
