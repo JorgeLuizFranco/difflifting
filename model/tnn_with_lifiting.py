@@ -724,7 +724,7 @@ class TNN_KNN_MLP_N(nn.Module):
                 data_for_lifting = {}
                 x_featured = self.feature_encoder(data)
                 data_for_lifting = {
-                    "x_0": x_featured.x_0,  # Node features
+                    "x_0": embeddings,  # Node features
                     "incidence_1": incidence_matrix_1,  # Node-to-edge incidence matrix
                     "incidence_2": incidence_matrix_2,  # edge_to-triangle
                     "adjacency_1": A,
