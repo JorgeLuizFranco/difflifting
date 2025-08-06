@@ -82,7 +82,7 @@ class TNN(nn.Module):
                 "layers": n_layers,
                 "use_edge_attr": False,
                 "activation": "relu",
-                # "gnn_type": sub_gccn,
+                "gnn_type": sub_gccn,
             }
             self.base_model = TopoTune_OneHasse(**backbone_config).to(device)
         self.incidence_models = ["UniGCN", "HyperGAT", "UniGIN", "UniSAGE"]

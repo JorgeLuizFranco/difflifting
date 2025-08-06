@@ -524,12 +524,16 @@ class TopoTune(torch.nn.Module):
         """
         if batch_route.x.shape[0] < 2:
             return batch_route.x
-        out = self.graph_routes[layer_idx][route_index](
-            batch_route.x,
-            batch_route.edge_index,
-            #    batch_route.edge_weight, # TODO Mathilde : some gnns take edge_weight (1d) and some take edge_attr.
-            #    batch_route.edge_attr,
-        )
+        if self.gnn_type == "GIN" or self.gnn_type == "GPS":
+            out = self.graph_routes[layer_idx][route_index](batch_route)
+        else:
+
+            out = self.graph_routes[layer_idx][route_index](
+                batch_route.x,
+                batch_route.edge_index,
+                #    batch_route.edge_weight, # TODO Mathilde : some gnns take edge_weight (1d) and some take edge_attr.
+                #    batch_route.edge_attr,
+            )
         return out
 
     def interrank_expand(
@@ -835,6 +839,7 @@ class TopoTune_OneHasse(torch.nn.Module):
         layers,
         use_edge_attr,
         activation,
+        gnn_type
     ):
         super().__init__()
         self.routes = get_routes_from_neighborhoods(neighborhoods)
@@ -846,7 +851,7 @@ class TopoTune_OneHasse(torch.nn.Module):
         self.graph_routes = torch.nn.ModuleList()
         self.GNN = [i for i in GNN.named_modules()]
         self.activation = activation
-
+        self.gnn_type = gnn_type
         # Instantiate GNN layers
         for _ in range(self.layers):
             self.graph_routes.append(copy.deepcopy(GNN))
@@ -1022,12 +1027,21 @@ class TopoTune_OneHasse(torch.nn.Module):
         torch.tensor
             The output of the GNN (updated features).
         """
-        out = self.graph_routes[layer_idx](
-            batch_route.x,
-            batch_route.edge_index,
-               # batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
-               # batch_route.edge_attr,
-        )
+        if self.gnn_type == "GIN" or self.gnn_type == "GPS":
+            out = self.graph_routes[layer_idx](
+                batch_route
+                # batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+                # batch_route.edge_attr,
+            )
+        else:
+
+            out = self.graph_routes[layer_idx](
+                batch_route.x,
+                batch_route.edge_index,
+                # batch_route.edge_weight, # TODO : some gnns take edge_weight (1d) and some take edge_attr.
+                # batch_route.edge_attr,
+            )
+
         return out
 
     def aggregate_inter_nbhd(self, x_out):
