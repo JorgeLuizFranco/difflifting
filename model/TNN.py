@@ -137,6 +137,83 @@ class TNN(nn.Module):
         return model_out
     
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+def _matmul(sparse_or_dense, x):
+    # supports (n_r, n_r) @ (n_r, C) etc.
+    if sparse_or_dense.is_sparse:
+        return torch.sparse.mm(sparse_or_dense, x)
+    return sparse_or_dense @ x
+
+class MLP(nn.Module):
+    def __init__(self, in_ch, hid_ch, out_ch, num_layers=2):
+        super().__init__()
+        layers = []
+        c_in = in_ch
+        for _ in range(num_layers-1):
+            layers += [nn.Linear(c_in, hid_ch), nn.ReLU()]
+            c_in = hid_ch
+        layers += [nn.Linear(c_in, out_ch)]
+        self.net = nn.Sequential(*layers)
+    def forward(self, x): return self.net(x)
+
+class CINFirstConv(nn.Module):
+    """
+    CIN-style 'upper' stream for r=1:
+      m_up = A_up @ x_1     (edge-edge upper adjacency)
+      m_cob = B_2 @ x_2     (co-boundary/face->edge)
+      out = MLP_up(m_up) + MLP_cob(m_cob)
+    """
+    def __init__(self, in_channels_1, in_channels_2, out_channels, hid=None):
+        super().__init__()
+        hid = hid or out_channels
+        self.mlp_up  = MLP(in_channels_1, hid, out_channels)
+        self.mlp_cob = MLP(in_channels_2, hid, out_channels)
+
+    def forward(self, x_1, x_2, adjacency_0, incidence_2):
+        m_up  = _matmul(adjacency_0, x_1)   # (n_edges, C1)
+        m_cob = _matmul(incidence_2, x_2)   # (n_edges, C2)
+        return self.mlp_up(m_up) + self.mlp_cob(m_cob)
+
+class CINSecondConv(nn.Module):
+    """
+    CIN-style 'lower/boundary' stream for r=1:
+      m_down = B_1^T @ x_0  (node->edge)
+      out = MLP_down(m_down)
+    """
+    def __init__(self, in_channels_0, in_channels_1, out_channels, hid=None):
+        super().__init__()
+        hid = hid or out_channels
+        self.mlp_down = MLP(in_channels_0, hid, out_channels)
+
+    def forward(self, x_0, x_1_unused, incidence_1_t):
+        m_down = _matmul(incidence_1_t, x_0)  # (n_edges, C0)
+        return self.mlp_down(m_down)
+
+class CINSumAggregate(nn.Module):
+    def forward(self, x, y):
+        return x + y  # sum the two streams
+
+class CINUpdate(nn.Module):
+    """
+    CIN-style update:
+      x_out = MLP( (1+eps) * x_prev + x_agg )
+    """
+    def __init__(self, in_channels, out_channels, hid=None, train_eps=True, eps_init=0.0):
+        super().__init__()
+        hid = hid or out_channels
+        self.mlp = MLP(in_channels, hid, out_channels)
+        if train_eps:
+            self.eps = nn.Parameter(torch.tensor(eps_init))
+        else:
+            self.register_buffer('eps', torch.tensor(eps_init))
+
+    def forward(self, x_aggregated, x_prev=None):
+        if x_prev is None:
+            x_prev = torch.zeros_like(x_aggregated)
+        return self.mlp((1.0 + self.eps) * x_prev + x_aggregated)
 
 
 import torch
@@ -250,7 +327,17 @@ class CWN(torch.nn.Module):
 import torch.nn.functional as F
 
 
-
+# inside CWNLayer.__init__(...)
+def _ensure_module(m):
+    if isinstance(m, (tuple, list)):
+        if len(m) == 0:
+            return None
+        if len(m) == 1:
+            return m[0]
+        # if there are multiple modules and you meant to compose them:
+        return nn.Sequential(*m)
+    return m
+#TODO: ADD DEFAULT CWN
 class CWNLayer(nn.Module):
     r"""Layer of a CW Network (CWN).
 
@@ -325,24 +412,41 @@ class CWNLayer(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__()
-        self.conv_1_to_1 = (
-            conv_1_to_1
-            if conv_1_to_1 is not None
+
+        self.conv_1_to_1 = _ensure_module(
+            conv_1_to_1 if conv_1_to_1 is not None
             else _CWNDefaultFirstConv(in_channels_1, in_channels_2, out_channels)
         )
-        self.conv_0_to_1 = (
-            conv_0_to_1
-            if conv_0_to_1 is not None
+
+        self.conv_0_to_1 = _ensure_module(
+            conv_0_to_1 if conv_0_to_1 is not None
             else _CWNDefaultSecondConv(in_channels_0, in_channels_1, out_channels)
         )
-        self.aggregate_fn = (
-            aggregate_fn if aggregate_fn is not None else _CWNDefaultAggregate()
-        )
-        self.update_fn = (
-            update_fn
-            if update_fn is not None
-            else _CWNDefaultUpdate(out_channels, out_channels)
-        )
+
+        # --- FIX: NO trailing commas here ---
+        self.aggregate_fn = _ensure_module(aggregate_fn if aggregate_fn is not None else CINSumAggregate())
+        self.update_fn = _ensure_module(
+            update_fn if update_fn is not None else CINUpdate(in_channels=out_channels, out_channels=out_channels,
+                                                              train_eps=True, eps_init=0.0))
+# )
+        # self.conv_1_to_1 = (
+        #     conv_1_to_1
+        #     if conv_1_to_1 is not None
+        #     else _CWNDefaultFirstConv(in_channels_1, in_channels_2, out_channels)
+        # )
+        # self.conv_0_to_1 = (
+        #     conv_0_to_1
+        #     if conv_0_to_1 is not None
+        #     else _CWNDefaultSecondConv(in_channels_0, in_channels_1, out_channels)
+        # )
+        # self.aggregate_fn = (
+        #     aggregate_fn if aggregate_fn is not None else _CWNDefaultAggregate()
+        # )
+        # self.update_fn = (
+        #     update_fn
+        #     if update_fn is not None
+        #     else _CWNDefaultUpdate(out_channels, out_channels)
+        # )
 
     def forward(
         self,
