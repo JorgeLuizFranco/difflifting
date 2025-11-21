@@ -23,14 +23,13 @@ triangle_counts = []  # Add this list to store triangle counts
 
 train_times = []
 test_times = []
-
 torch.autograd.set_detect_anomaly(True)
 import tempfile
 if __name__ == '__main__':
 
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    torch.cuda.reset_peak_memory_stats()
     args = parse_args()
     set_seed(args.seed)
     print(args.__dict__)
@@ -82,8 +81,8 @@ if __name__ == '__main__':
     evaluator = None
     if args.dataset == "ogbg-molhiv":
         evaluator = Evaluator(args.dataset)
-
-
+    elif args.dataset == "PCQM4Mv2":
+        evaluator = PCQM4Mv2Evaluator()
     
     k_vs = []  # list to track chosen k_v for each epoch
 
@@ -147,6 +146,9 @@ if __name__ == '__main__':
             print("Early stopping!")
             break
 
+    gpu_allocated = torch.cuda.memory_allocated() / 1024 ** 2  # MB
+    gpu_reserved = torch.cuda.memory_reserved() / 1024 ** 2  # MB
+    gpu_peak = torch.cuda.max_memory_allocated() / 1024 ** 2
     results = {
         "train_losses": tensor(train_losses),
         "test_accuracies": tensor(test_accuracies),

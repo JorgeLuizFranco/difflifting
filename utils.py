@@ -55,10 +55,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset",
         type=str,
-        default="PROTEINS",
+        default="NCI1",
         choices=["Cora", "Citeseer", "Pubmed",   #Classic Node classification datasets
              "CS", "Physics","Cornell", "Texas", "Wisconsin","chameleon", "crocodile", "squirrel", #Heterophilous Graph dataset
-                 "ogbg-molhiv", "NCI1", "NCI109", "IMDB-BINARY",  # Graph Classification datasets
+                 "ogbg-molhiv", "NCI1", "NCI109", "IMDB-BINARY",'PCQM4Mv2'  # Graph Classification datasets
                  "REDDIT-BINARY", "ENZYMES", "PROTEINS", "DD", "MUTAG", "ZINC"],
     )
     parser.add_argument(

@@ -13,7 +13,6 @@ from torch_geometric.datasets import KarateClub
 from torch_geometric.datasets import Planetoid, Coauthor, WikipediaNetwork, WebKB
 from torch_geometric.datasets import HeterophilousGraphDataset
 from torch_geometric.loader import DataLoader
-
 from preprocessing.equal_gauss_features.equal_gaus_features import EqualGausFeatures
 from preprocessing.one_hot_degree_features.transforms import OneHotDegreeFeatures, NodeDegrees
 from tools.collate import collate_fn
@@ -158,11 +157,22 @@ def divide_train_val_test_split(dataset: PygGraphPropPredDataset, args):
             data_val = dataset[split_idx["valid"]]
             data_test = dataset[split_idx["test"]]
 
-        return get_data_loaders(train_data, data_val, data_test, args.batch_size)
+    elif dataset.name == 'PCQM4Mv2':
+        split_idx = dataset.get_idx_split()
+
+        train_data = dataset[split_idx["train"]]
+        data_val = dataset[split_idx["valid"]]
+        data_test = dataset[split_idx["test"]]
+        if args.lifting != "diffLifting":
+            dataset = lift_topology(dataset, args)
+            train_data = dataset[split_idx["train"]]
+            data_val = dataset[split_idx["valid"]]
+            data_test = dataset[split_idx["test-challenge"]]
+
+    return get_data_loaders(train_data, data_val, data_test, args.batch_size)
 
 
-
-def get_graph_classification_dataset(dataset: str, batch_size, args, device, seed=42):
+def get_graph_classification_dataset(dataset: str, batch_size, args, seed=42):
     """Returns DataLoaders for the given dataset.
 
     Args:
@@ -181,6 +191,12 @@ def get_graph_classification_dataset(dataset: str, batch_size, args, device, see
         train_loader, val_loader, test_loader = divide_train_val_test_split(dataset, args)
         dataloaders = (train_loader, val_loader, test_loader)
 
+    # if dataset == "PCQM4Mv2":
+    #     dataset = get_ogb_data_smiles(dataset)
+    #     if args.gnn == "GPS":
+    #         dataset = add_positional_encoding(args, dataset)
+    #     train_loader, val_loader, test_loader = divide_train_val_test_split(dataset, args)
+    #     dataloaders = (train_loader, val_loader, test_loader)
     elif dataset == "ZINC":
         train_set, val_set, test_set = get_zinc(args)
         if args.gnn == "GPS":
@@ -427,7 +443,7 @@ def choose_dataset(args, device):
     if args.dataset in NODES_PREDICTION_DATASET:
         return get_node_prediction_dataset(args.dataset, args)
     else:
-        return get_graph_classification_dataset(args.dataset, args.batch_size, args, device)
+        return get_graph_classification_dataset(args.dataset, args.batch_size, args, args.seed)
 
 def add_positional_encoding(args, dataset):
     positional_encoder = AddRandomWalkPE(walk_length=args.positional_walking_len, attr_name='pe')
