@@ -16,6 +16,9 @@ from dataset.dataset_handler import choose_dataset
 from utils import parse_args, set_seed
 import torch.nn as nn
 import os
+
+import psutil
+
 train_losses = []
 test_accuracies = []
 train_accuracies = []
@@ -27,7 +30,7 @@ torch.autograd.set_detect_anomaly(True)
 import tempfile
 if __name__ == '__main__':
 
-
+    process = psutil.Process()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.cuda.reset_peak_memory_stats()
     args = parse_args()
@@ -149,6 +152,7 @@ if __name__ == '__main__':
     gpu_allocated = torch.cuda.memory_allocated() / 1024 ** 2  # MB
     gpu_reserved = torch.cuda.memory_reserved() / 1024 ** 2  # MB
     gpu_peak = torch.cuda.max_memory_allocated() / 1024 ** 2
+    print(process.memory_info().rss / 1024 ** 3, "GB")  # memória real usada
     results = {
         "train_losses": tensor(train_losses),
         "test_accuracies": tensor(test_accuracies),
@@ -157,6 +161,12 @@ if __name__ == '__main__':
         "val_losses": tensor(val_losses),
         "train_times": train_times,
         "test_times": test_times,
+        "cpu_memory": process.memory_info().rss,
+        "gpu_stats": {
+            "memory_allocated_MB": torch.cuda.memory_allocated(),
+            "memory_reserved_MB": torch.cuda.memory_reserved(),
+            "memory_peak_MB": torch.cuda.max_memory_allocated(),
+        },
         "params": {
             "gnn": args.gnn,
             "num_layers_gnn": args.num_layers_gnn,
