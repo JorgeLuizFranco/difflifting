@@ -32,6 +32,14 @@ train_times = []
 test_times = []
 torch.autograd.set_detect_anomaly(True)
 import tempfile
+
+def define_path(dataset):
+    if dataset in ["nci1", "nci109", "proteins","mutag"]:
+        return "tudatasets"
+    elif dataset == "zinc":
+        return "zinc"
+    elif dataset == "molhiv":
+        return "ogb"
 if __name__ == '__main__':
 
     process = psutil.Process()
@@ -40,7 +48,8 @@ if __name__ == '__main__':
     _, parser = parse_args()
     args, opts = parser.parse_known_args()
     config = Config()
-    config.load(args.cfg, recursive=True)
+    config_path = f"ipr_mpnn/configs/{define_path(args.dataset)}/{args.dataset}.yaml"
+    config.load(config_path, recursive=True)
     config.update(opts)
     args = args_unify(args_canonize(config))
     args.update(parser.parse_args().__dict__)

@@ -230,5 +230,5 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--t", type=float, default=5, help="Temperature parameter for the heat kernel.")
     parser.add_argument("--deterministic", action="store_true", help="Run without sampling, use deterministic neighbor and inclusion selection.")
-    parser.add_argument('--cfg', type=str, default="ipr_mpnn/configs/tudatasets/nci1.yaml", required=False, help='config file')
+    # parser.add_argument('--cfg', type=str, default="ipr_mpnn/configs/tudatasets/nci1.yaml", required=False, help='config file')
     return parser.parse_args(), parser
