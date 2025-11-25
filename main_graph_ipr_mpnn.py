@@ -48,7 +48,7 @@ if __name__ == '__main__':
     _, parser = parse_args()
     args, opts = parser.parse_known_args()
     config = Config()
-    config_path = f"ipr_mpnn/configs/{define_path(args.dataset.lower())}/{args.dataset.lower()}.yaml"
+    config_path = os.path.join(os.getcwd(), f"ipr_mpnn/configs/{define_path(args.dataset.lower())}/{args.dataset.lower()}.yaml")
     config.load(config_path, recursive=True)
     config.update(opts)
     args = args_unify(args_canonize(config))
