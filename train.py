@@ -39,7 +39,7 @@ def evaluate(model, loader, loss_fn, device, evaluator=None):
         loss = loss_fn(out.squeeze(), batch.y.squeeze()) / batch.num_graphs
         total_loss += loss.item()
         if not isinstance(loss_fn, torch.nn.L1Loss):
-            total_correct += (out.argmax(dim=-1) == batch.y.squeeze()).sum().item()
+            total_correct += (out.squeeze().argmax(dim=-1) == batch.y.squeeze()).sum().item()
     if isinstance(loss_fn, torch.nn.CrossEntropyLoss):
         accuracy = total_correct / loader.dataset.len()
     else:
