@@ -9,7 +9,7 @@ def train(loader, model, loss_fn, optimizer, device):
         batch = batch.to(device)
         optimizer.zero_grad()
         out = model(batch)
-        loss = loss_fn(out.squeeze(), batch.y.squeeze()) / batch.num_graphs
+        loss = loss_fn(torch.stack(out[0], dim=1).squeeze(), batch.y.squeeze()) / batch.num_graphs
         loss.backward()
         optimizer.step()
         #Logging gradients
@@ -31,7 +31,7 @@ def evaluate(model, loader, loss_fn, device, evaluator=None):
     y_true = []
     for batch in loader:
         batch = batch.to(device)
-        out = model(batch)
+        out = torch.stack(model(batch)[0],dim=1)
         if evaluator is not None:
             y_pred.append(out[:, 1].unsqueeze(-1))
             y_true.append(batch.y)
