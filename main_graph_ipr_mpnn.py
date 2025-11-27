@@ -19,8 +19,8 @@ import torch.nn as nn
 import os
 
 import psutil
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
+# import torch._dynamo
+# torch._dynamo.config.suppress_errors = True
 # import os
 # os.environ["TORCH_COMPILE"] = "0"
 train_losses = []
@@ -65,7 +65,7 @@ if __name__ == '__main__':
 
     diff_lifting = True if args.lifting == "diffLifting" else False
     model = get_model(args, device)
-    model = torch.compile(model, backend="eager")
+    # model = torch.compile(model, backend="eager")
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
