@@ -241,9 +241,9 @@ def get_zinc(args):
         tuple: A tuple containing the training, validation, and test datasets.
     """
     path = osp.join(osp.dirname(osp.realpath(__file__)), PATH, "ZINC")
-    train_data = ZINC(path, subset=True, split="train", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
-    data_val = ZINC(path, subset=True, split="val", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
-    data_test = ZINC(path, subset=True, split="test", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
+    train_data = ZINC(path, subset=True, split="train")
+    data_val = ZINC(path, subset=True, split="val")
+    data_test = ZINC(path, subset=True, split="test")
 
     if args.lifting != "diffLifting":
         train_data =  lift_topology(train_data, args)

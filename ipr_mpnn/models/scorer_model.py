@@ -30,7 +30,7 @@ class ScorerGNN(torch.nn.Module):
                        norm=norm)
 
     def forward(self, data):
-        batch, edge_index, edge_attr = data.batch, data.edge_index, data.edge_attr
+        batch, edge_index, edge_attr = data.batch_0, data.edge_index, data.edge_attr
         x = self.atom_encoder(data)
 
         if self.gnn is not None:

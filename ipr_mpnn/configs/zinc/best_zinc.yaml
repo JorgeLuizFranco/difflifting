@@ -21,18 +21,7 @@ scheduler_patience: 50
 log_test: true
 
 # encoder
-encoder:
-    rwse:
-        kernel: 20
-        layers: 2
-        dim_pe: 32
-        raw_norm_type: 'BatchNorm'
-
-    lap:
-        max_freqs: 4
-        dim_pe: 32
-        layers: 1
-        raw_norm_type: null
+encoder: none
 
 #scorer_model: none
 scorer_model:

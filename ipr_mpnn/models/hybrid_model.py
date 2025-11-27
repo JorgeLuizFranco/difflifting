@@ -43,7 +43,7 @@ class HybridModel(torch.nn.Module):
         cumsum_nnodes = data._slice_dict['x']
         nnodes_list = (cumsum_nnodes[1:] - cumsum_nnodes[:-1]).to(device)
         n_graphs = data.num_graphs
-
+        data.batch = data.batch_0
         # get scores and samples
         scores = self.scorer_model(data)
         nnodes, max_n_centroids, n_ensemble = scores.shape

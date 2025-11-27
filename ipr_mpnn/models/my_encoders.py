@@ -26,7 +26,7 @@ class ZINCAtomEncoder(torch.nn.Module):
         torch.nn.init.xavier_uniform_(self.embedding.weight.data)
 
     def forward(self, data):
-        return self.embedding(data.x)
+        return self.embedding(data.x).squeeze()
 
 
 class EXPAtomEncoder(torch.nn.Module):
