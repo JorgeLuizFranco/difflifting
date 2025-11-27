@@ -26,7 +26,7 @@ class GINE(BasicGNN):
             norm=self.norm,
             norm_kwargs=self.norm_kwargs,
         )
-        return GINEConv(edge_encoder_handler(), nn=mlp, **kwargs)
+        return GINEConv(bond_encoder=edge_encoder_handler(), nn=mlp, **kwargs)
 
 
 class GCN(BasicGNN):
