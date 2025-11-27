@@ -246,7 +246,7 @@ class LapPENodeEncoder(torch.nn.Module):
 
         self.pe_encoder = torch.nn.Sequential(
             raw_norm,
-            MLP([max_freqs] + (n_layers - 1) * [2 * dim_pe] + [dim_pe])
+            MLP([dim_pe] + [2 * dim_pe] *  (n_layers - 1) + [max_freqs])
         )
 
     def forward(self, x, batch):
@@ -274,7 +274,7 @@ class LapPENodeEncoder(torch.nn.Module):
         else:
             h = x
         # Concatenate final PEs to input embedding
-        x = torch.cat((h, pos_enc), 1)
+        x = torch.cat((h.squeeze(), pos_enc), 1)
         # Keep PE also separate in a variable (e.g. for skip connections to input)
         return x
 

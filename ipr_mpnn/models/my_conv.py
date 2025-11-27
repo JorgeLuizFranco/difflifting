@@ -156,8 +156,11 @@ class GINEConv(PyGGINEConv):
     def __init__(self,
                  bond_encoder,
                  **kwargs):
+        kwargs.pop("edge_encoder")
+        in_channels = kwargs['in_channels']
+        kwargs.pop("in_channels")
         super().__init__(**kwargs)
-        self.bond_encoder = torch.nn.Sequential(bond_encoder, Linear(-1, kwargs['in_channels']))
+        self.bond_encoder = torch.nn.Sequential(bond_encoder, Linear(-1, in_channels))
 
     def forward(
         self,

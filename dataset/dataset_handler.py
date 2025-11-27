@@ -15,6 +15,7 @@ from torch_geometric.datasets import HeterophilousGraphDataset
 from torch_geometric.loader import DataLoader
 from preprocessing.equal_gauss_features.equal_gaus_features import EqualGausFeatures
 from preprocessing.one_hot_degree_features.transforms import OneHotDegreeFeatures, NodeDegrees
+from preprocessing.preprocessing import AddLaplacianEigenvectorPE
 from tools.collate import collate_fn
 from tools.lifting.clique_lifting import SimplicialCliqueLifting
 from tools.lifting.khop import SimplicialKHopLifting
@@ -240,9 +241,9 @@ def get_zinc(args):
         tuple: A tuple containing the training, validation, and test datasets.
     """
     path = osp.join(osp.dirname(osp.realpath(__file__)), PATH, "ZINC")
-    train_data = ZINC(path, subset=True, split="train")
-    data_val = ZINC(path, subset=True, split="val" )
-    data_test = ZINC(path, subset=True, split="test")
+    train_data = ZINC(path, subset=True, split="train", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
+    data_val = ZINC(path, subset=True, split="val", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
+    data_test = ZINC(path, subset=True, split="test", transform=torch_geometric.transforms.Compose([AddLaplacianEigenvectorPE(32), AddRandomWalkPE(args.encoder.rwse.kernel, 'pestat_RWSE')]))
 
     if args.lifting != "diffLifting":
         train_data =  lift_topology(train_data, args)
