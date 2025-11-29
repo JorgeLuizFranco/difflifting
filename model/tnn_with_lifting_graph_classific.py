@@ -257,7 +257,7 @@ def compute_node_cell_matrix(
 class TNN_KNN_MLP_G(nn.Module):
 
     def __init__(self, in_channels, args, hidden_dim, num_classes, k=2, diff_lifting=False, global_pool="sum",
-             device="cpu", tnn_type="SCN2", num_layers_tnn=4, num_layers_gnn=3, embedding_dim=64, k_max=10, deterministic=False):
+             device="cpu", tnn_type="SCN2", num_layers_tnn=4, num_layers_gnn=3, embedding_dim=64, k_max=3, deterministic=False):
         super().__init__()
         self.k = k
         self.k_min = 2
@@ -434,7 +434,10 @@ class TNN_KNN_MLP_G(nn.Module):
             if (self.tnn_type == "UniGCNII" or self.tnn_type == "UniGCN" or
                 self.tnn_type == "HyperGAT" or self.tnn_type == "UniGIN" or self.tnn_type == "UniSAGE"):
 
-                knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
+                max_k = int(torch.max(self.k_v).item())
+                max_k = min(max_k, distances.size(-1))  # aqui evitamos o erro
+                knn_indices = torch.topk(-distances, max_k, dim=-1)[1]
+                # knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
                 aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(self.k_v.shape[0], -1)
                 kv_mask = aranged_indices < k_v.unsqueeze(1)
                 first_neighbor = knn_indices[:, 0].unsqueeze(1)
