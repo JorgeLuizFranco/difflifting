@@ -107,5 +107,6 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--t", type=float, default=5, help="Temperature parameter for the heat kernel.")
     parser.add_argument("--deterministic", action="store_true", help="Run without sampling, use deterministic neighbor and inclusion selection.")
+    parser.add_argument("--point_cloud", action="store_true", help="Disconnect graph edges and treat dataset as point clouds for diffLifting.")
 
     return parser.parse_args()

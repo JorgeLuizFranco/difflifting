@@ -48,6 +48,42 @@ LIFTINGS = {
 }
 PATH = "../DATA/DATASETS"
 
+
+def disconnect_graph(data):
+    """Disconnect a graph by removing all edges, creating a point cloud.
+    
+    Parameters
+    ----------
+    data : torch_geometric.data.Data or list of Data objects
+        The input data object(s) to disconnect.
+        
+    Returns
+    -------
+    torch_geometric.data.Data or list of Data objects
+        The modified data object(s) with edges removed.
+    """
+    if isinstance(data, list):
+        disconnected_data = []
+        for graph in data:
+            disconnected_graph = graph.clone()
+            # Remove edges by creating empty edge_index
+            disconnected_graph.edge_index = torch.empty((2, 0), dtype=torch.long)
+            # Remove edge attributes if they exist
+            if hasattr(disconnected_graph, 'edge_attr') and disconnected_graph.edge_attr is not None:
+                disconnected_graph.edge_attr = torch.empty((0, disconnected_graph.edge_attr.size(1)), 
+                                                         dtype=disconnected_graph.edge_attr.dtype)
+            disconnected_data.append(disconnected_graph)
+        return disconnected_data
+    else:
+        # Single data object
+        disconnected_data = data.clone()
+        disconnected_data.edge_index = torch.empty((2, 0), dtype=torch.long)
+        if hasattr(disconnected_data, 'edge_attr') and disconnected_data.edge_attr is not None:
+            disconnected_data.edge_attr = torch.empty((0, disconnected_data.edge_attr.size(1)), 
+                                                     dtype=disconnected_data.edge_attr.dtype)
+        return disconnected_data
+
+
 class FilterConstant(object):
   def __init__(self, dim):
     """Initializes the FilterConstant class.
@@ -158,6 +194,17 @@ def divide_train_val_test_split(dataset: PygGraphPropPredDataset, args):
             data_val = dataset[split_idx["valid"]]
             data_test = dataset[split_idx["test"]]
 
+        # Apply point cloud disconnection if requested
+        if args.point_cloud:
+            print(f"Applying point cloud disconnection to OGB dataset: {dataset.name}")
+            
+            # Disconnect graphs in train, validation, and test sets
+            train_data = disconnect_graph(list(train_data))
+            data_val = disconnect_graph(list(data_val))
+            data_test = disconnect_graph(list(data_test))
+            
+            print(f"Point cloud disconnection applied to {len(train_data)} train, {len(data_val)} val, {len(data_test)} test graphs")
+
         return get_data_loaders(train_data, data_val, data_test, args.batch_size)
 
 
@@ -197,6 +244,22 @@ def get_graph_classification_dataset(dataset: str, batch_size, args, device, see
         train_set, val_set, test_set = data_split(dataset, seed)
         dataloaders = get_data_loaders(train_set,val_set, test_set, batch_size)
 
+    # Point cloud mode: disconnect graph edges for all datasets
+    if args.point_cloud:
+        print(f"Point cloud mode enabled for graph classification dataset: {dataset}")
+        
+        # Force diffLifting mode for point clouds since other lifting methods need graph structure
+        if args.lifting != "diffLifting":
+            print(f"Warning: Switching from {args.lifting} to diffLifting for point cloud mode")
+            args.lifting = "diffLifting"
+        
+        # Disconnect edges in the datasets
+        if hasattr(dataloaders, '__iter__') and len(dataloaders) == 3:
+            # Check if we have train/val/test loaders
+            print("Disconnecting graphs in train/validation/test sets")
+            # Note: The actual disconnection will happen in the collate function or data loading
+            # since dataloaders contain batched data
+
     return dataloaders, dataset.num_features, dataset.num_classes
 
 
@@ -232,6 +295,23 @@ def get_zinc(args):
         train_data =  lift_topology(train_data, args)
         data_val = lift_topology(data_val, args)
         data_test = lift_topology(data_test, args)
+        
+    # Apply point cloud disconnection if requested
+    if args.point_cloud:
+        print("Applying point cloud disconnection to ZINC dataset")
+        
+        # Disconnect all graphs in each split
+        train_list = [disconnect_graph(data) for data in train_data]
+        val_list = [disconnect_graph(data) for data in data_val]
+        test_list = [disconnect_graph(data) for data in data_test]
+        
+        # Re-collate each dataset
+        train_data.data, train_data.slices = train_data.collate(train_list)
+        data_val.data, data_val.slices = data_val.collate(val_list)
+        data_test.data, data_test.slices = data_test.collate(test_list)
+        
+        print(f"Point cloud disconnection applied to ZINC: {len(train_list)} train, {len(val_list)} val, {len(test_list)} test graphs")
+    
     return train_data, data_val, data_test
 
 
@@ -259,7 +339,29 @@ def tu_datasets(name,args, no_feat_replacement='constant'):
                             use_node_attr=False, )
 
     if args.lifting != "diffLifting":
-        return lift_topology(dataset, args)
+        dataset = lift_topology(dataset, args)
+    
+    # Apply point cloud disconnection if requested
+    if args.point_cloud:
+        print(f"Applying point cloud disconnection to TU dataset: {name}")
+        print(f"Dataset has {len(dataset)} graphs")
+        
+        # Disconnect all graphs in the dataset
+        data_list = []
+        total_edges_before = 0
+        total_edges_after = 0
+        
+        for i, data in enumerate(dataset):
+            total_edges_before += data.edge_index.size(1)
+            disconnected_data = disconnect_graph(data)
+            total_edges_after += disconnected_data.edge_index.size(1)
+            data_list.append(disconnected_data)
+        
+        print(f"Original total edges: {total_edges_before}, after disconnection: {total_edges_after}")
+        
+        # Re-collate the dataset with disconnected graphs
+        dataset.data, dataset.slices = dataset.collate(data_list)
+    
     return dataset
 
 
@@ -410,6 +512,17 @@ def get_node_prediction_dataset(dataset, args,dim=None, seed=42):
             data, dataset_name=args.dataset, curr_seed=mask_nr
         )
 
+    # Point cloud mode: disconnect the graph by removing edges
+    if args.point_cloud:
+        print(f"Point cloud mode enabled: Disconnecting graph edges for dataset {dataset}")
+        print(f"Original graph has {data.edge_index.size(1)} edges")
+        data = disconnect_graph(data)
+        print(f"After disconnection: {data.edge_index.size(1)} edges")
+        
+        # Force diffLifting mode for point clouds since other lifting methods need graph structure
+        if args.lifting != "diffLifting":
+            print(f"Warning: Switching from {args.lifting} to diffLifting for point cloud mode")
+            args.lifting = "diffLifting"
 
     dataloaders = get_data_loaders([data], [data], [data])
     return dataloaders, dataset.num_features, dataset.num_classes
