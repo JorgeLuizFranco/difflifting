@@ -36,7 +36,7 @@ class AttentionLifting(nn.Module):
                                                                                                        device=device)
         self.W3 = torch.randn(feature_dim, feature_dim, device=device) if feature_dim else torch.randn(64, 64,
                                                                                                        device=device)
-        self.k_v = torch.tensor(2.0)  # Automatically requires_grad=True
+        self.k_v = torch.tensor(2.0)
         self.phi = torch.nn.Sequential(
             torch.nn.Linear(feature_dim if feature_dim else 64, feature_dim * 2 if feature_dim else 128),
             torch.nn.ReLU(),
@@ -64,44 +64,39 @@ class AttentionLifting(nn.Module):
             [key.split("_")[1] for key in data if ("incidence" in key and "-" not in key)]
         )
 
-        self.k_v = data["k_v"]  # Automatically requires_grad=True
+        self.k_v = data["k_v"]
 
         for elem in keys:
             if f"x_{elem}" not in data:
                 idx_to_project = 0 if elem == "hyperedges" else int(elem) - 1
                 incidence = data["incidence_" + elem]
 
-                # Get nodes involved in each structure
+
                 node_features = data[f"x_{idx_to_project}"]
 
-                # For each structure (edge/hyperedge), get its incident nodes
+
                 structures = []
                 for i in range(incidence.shape[1]):
                     nodes = torch.where(incidence[:, i] != 0)[0]
                     if len(nodes) > 0:
                         structures.append((i, nodes))
 
-                # Compute lifted features for each structure
                 lifted_features = []
                 for struct_idx, nodes in structures:
                     features = node_features[nodes]
 
-                    # Compute attention scores using the gradient-preserving k_v
                     scaling_factor = torch.sqrt(self.k_v)
                     query = torch.matmul(features, self.W1.t())
                     key = torch.matmul(features, self.W2.t())
                     scores = torch.matmul(query, key.t()) / scaling_factor
 
-                    # Apply attention
                     attention = torch.softmax(scores, dim=-1)
                     values = torch.matmul(features, self.W3.t())
                     messages = torch.matmul(attention, values)
 
-                    # Apply order-invariant aggregation
                     structure_feature = self.phi(messages.mean(dim=0, keepdim=True))
                     lifted_features.append(structure_feature)
 
-                # Combine all lifted features
                 if lifted_features:
                     data["x_" + elem] = torch.cat(lifted_features, dim=0)
                 else:
@@ -149,17 +144,14 @@ def compute_node_cell_matrix(
     counts = mask.sum(dim=1).clamp(min=1)                     # [C, 1]
     pooled = summed / counts                                  # [C, D]
 
-    # 3) Compute 2‑class logits & sharpened probabilities
-    #    just like your edge code, but on cycles
+
     cell_logits = cell_mlp(pooled)                            # [C, 2]
     sharp_logits = cell_logits * sharpening_factor            # [C, 2]
     cell_probs = F.softmax(sharp_logits, dim=-1)[:, 1]         # sharpened p(class=1), [C]
 
-    # 4) Straight‑through estimator
     cell_hard = (cell_probs > 0.5).float()                    # [C], 0 or 1
     cell_ste  = cell_hard + (cell_probs - cell_probs.detach())# [C], STE
 
-    # ⚠️ Check if no cycle was selected
     if cell_ste.sum() == 0:
         empty_indices = torch.empty((2, 0), dtype=torch.long, device=device)
         empty_values = torch.empty((0,), device=device)
@@ -190,16 +182,12 @@ def compute_node_cell_matrix(
         requires_grad=True
     ).coalesce()
 
-    ### >>>> REMOVE ALL‐ZERO COLUMNS (cycles) WITHOUT BREAKING GRADIENTS <<<< ###
 
-    # 1. Sum per cycle‐column to detect empty cycles
     col_sums = torch.sparse.sum(node_cell_sampled, dim=0).to_dense()  # [C]
 
-    # 2. Mask of cycles to keep
     keep_mask = col_sums > 0  # [C] bool
     if keep_mask.numel() == 0 or not keep_mask.any():
-        # Check if keep_mask is empty
-        # Handle the case where no cycles are kept
+
         empty_indices = torch.empty((2, 0), dtype=torch.long, device=device)
         empty_values = torch.empty((0,), device=device)
         node_cell_sampled = torch.sparse_coo_tensor(
@@ -209,12 +197,9 @@ def compute_node_cell_matrix(
             device=device
         ).coalesce()
         return pooled, node_cell_sampled
-    # 3. Duplicate mask to match the flattened indices length
-    #    Here each index in `indices` refers directly to a cycle,
-    #    so we just index by the second row:
+
     mask_cycles = keep_mask[indices[1]]  # [K]
 
-    # 4. Filter indices & values
     filtered_indices = indices[:, mask_cycles]
     filtered_values  = values[mask_cycles]
 
@@ -255,7 +240,7 @@ def compute_node_cell_matrix(
 HYPERGRAPH_MODULES = ["UniGCNII", "UniGCN", "AST", "HyperGAT", "UniGIN", "UniSAGE"]
 class TNN_KNN_MLP_N(nn.Module):
 
-    def __init__(self, in_channels, args, hidden_dim, num_classes, k=2, diff_lifting=False, global_pool="sum",
+    def __init__(self, in_channels, args, hidden_dim, num_classes, k=2, diff_lifting=False, global_pool="mean",
                  device="cpu", tnn_type="SCN2", num_layers_tnn=4, num_layers_gnn=3, embedding_dim=64, k_max=10):
         super(TNN_KNN_MLP_N, self).__init__()
         self.k = k
@@ -266,8 +251,13 @@ class TNN_KNN_MLP_N(nn.Module):
         self.diff_lifting = diff_lifting
         self.tnn_type = tnn_type
         self.num_classes = num_classes
-
-        self.feature_encoder = AllCellFeatureEncoder(in_channels=[in_channels,in_channels,in_channels], out_channels=hidden_dim,
+        self.dropout = nn.Dropout(0.5)
+        if tnn_type in HYPERGRAPH_MODULES:
+            hidden_dim = hidden_dim
+        else:
+            if diff_lifting:
+                hidden_dim = embedding_dim
+        self.feature_encoder = AllCellFeatureEncoder(in_channels=[in_channels, in_channels, in_channels], out_channels=hidden_dim,
                                                     proj_dropout=0.5)
         if diff_lifting ==  "diffLifting":
 
@@ -277,15 +267,8 @@ class TNN_KNN_MLP_N(nn.Module):
                 self.gnn = GPS(in_channels, embedding_dim, args.positional_walking_len, num_layers_gnn).to(device)
             self.pool = global_mean_pool
             self.k = k
-            self.mlp = nn.Sequential(
-                nn.Linear(embedding_dim, 2 * hidden_dim),
-                nn.ReLU(),
-                nn.Linear(2 * hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(0.5),
-                nn.Linear(hidden_dim, 1),
-            )
-            if tnn_type in HYPERGRAPH_MODULES:
+
+            if tnn_type in ["UniGCNII", "UniGCN", "AST", "HyperGAT", "UniGIN", "UniSAGE"]:
                 self.mlp = nn.Sequential(
                     nn.Linear(embedding_dim, 2 * hidden_dim),
                     nn.ReLU(),
@@ -308,14 +291,7 @@ class TNN_KNN_MLP_N(nn.Module):
                     nn.ReLU(),
                     nn.Linear(64, 2)  # Output logits for two classes (0 and 1)
                 )
-                # self.mlp_cell2 = nn.Sequential(
-                #     nn.Linear(128, 2 * hidden_dim),  # Change input dimension to 128
-                #     nn.ReLU(),
-                #     nn.Linear(2 * hidden_dim, hidden_dim),
-                #     nn.ReLU(),
-                #     nn.Dropout(0.5),
-                #     nn.Linear(hidden_dim, 1),  # Output: probability per cycle
-                # )
+
             self.k_mlp = torch.nn.Sequential(
                 torch.nn.Linear(embedding_dim, 64),
                 torch.nn.ReLU(),
@@ -342,10 +318,6 @@ class TNN_KNN_MLP_N(nn.Module):
             device=device
         )
 
-
-
-        # self.classifier = nn.Linear(hidden_dim, num_classes)
-
         if args.no_readout:
             self.readout = DirectReadout(**{
                 "readout_name": "DirectReadout",
@@ -356,12 +328,13 @@ class TNN_KNN_MLP_N(nn.Module):
         else:
             self.readout = PropagateSignalDown(**{
                 "readout_name": "PropagateSignalDownLinear",
-                "num_cell_dimensions": 2,
+                "num_cell_dimensions": 3,
                 "hidden_dim": hidden_dim,
-                "out_channels": num_classes,
+                "out_channels": hidden_dim,
                 "task_level": "node",
                 "pooling_type": global_pool,
             })
+            # self.residual_concat = torch.nn.Linear(hidden_dim*2, num_classes)
 
     def __create_laplacians(self, data, incidence_matrix_1, lifted_data, data_for_lifting):
         new_edge_index, new_edge_attr = torch_geometric.utils.get_laplacian(data.edge_index)
@@ -393,7 +366,6 @@ class TNN_KNN_MLP_N(nn.Module):
 
     def forward(self, batch):
         data = batch
-
         if self.diff_lifting:
             x, edge_index = data.x.float(), data.edge_index
             # print("Initial data.x shape:", data.x.shape)  # Initial shape
@@ -463,14 +435,9 @@ class TNN_KNN_MLP_N(nn.Module):
                 node_triangle_matrix = mask.scatter_(1, knn_indices, straight_through_samples.repeat(1, torch.max(
                     self.k_v).long().item()))
 
-                # This is not used, but we keep it for future use
-                incidence_matrix_2 = incidence_matrix_1.T @ node_triangle_matrix
-                incidence_matrix_2 = torch.div(incidence_matrix_2, 2, rounding_mode='trunc')
-                # ---- # ----- # ----- #
 
-                # print("incidence matrix before concatenation:", incidence_matrix_1.shape)
                 incidence_matrix_1 = torch.cat((incidence_matrix_1, node_triangle_matrix), dim=1)
-
+                # print(incidence_matrix_1.shape)
                 # print("incidence matrix after concatenation:", incidence_matrix_1.shape)
                 # print(incidence_matrix_1.grad_fn)
 
@@ -480,8 +447,16 @@ class TNN_KNN_MLP_N(nn.Module):
 
                 # print("data.x_0 after division:", data.x_0.shape)
 
-                data.incidence_1 = incidence_matrix_1
-                data.incidence_1 = torch.Tensor(data.incidence_1).to_sparse_coo()
+                col_sums = incidence_matrix_1.sum(dim=0)  # [total_cols]
+
+                # 2) Build keep‐mask
+                keep = col_sums > 0  # [total_cols], bool
+
+                # 3) Index out zero columns (gather on dim=1 preserves grads)
+                incidence_pruned = incidence_matrix_1[:, keep]  # [num_nodes, num_kept]
+
+                # 4) Convert to sparse‐COO if that’s what your pipeline expects
+                data.incidence_1 = incidence_pruned.to_sparse_coo()
 
                 # print(data)
                 data = self.feature_encoder(data)
@@ -494,9 +469,9 @@ class TNN_KNN_MLP_N(nn.Module):
                 return out["logits"]
 
                 ## Now the Cellular Complex Diff Lifiting
-                       
+
             else:
-      
+
 
                 knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
                 aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(
@@ -572,9 +547,7 @@ class TNN_KNN_MLP_N(nn.Module):
                     device=edge_classes.device
                 ).coalesce()
 
-                ### >>>> REMOVE ZERO‐ONLY COLUMNS (keep gradient) <<<< ###
 
-                # 1. Sum per column to detect non‑zero columns
                 col_sums = torch.sparse.sum(incidence_matrix_sampled, dim=0).to_dense()  # [num_edges_sampled]
 
                 # 2. Boolean mask of columns to keep
@@ -627,12 +600,22 @@ class TNN_KNN_MLP_N(nn.Module):
                     original_incidence[edge[0], idx] = 1
                     original_incidence[edge[1], idx] = 1
 
-                original_incidence_sparse = original_incidence.to_sparse_coo()
+                if self.tnn_type == "CXN":
+                    original_incidence_sparse = original_incidence
+                else:
+                    original_incidence_sparse = original_incidence.to_sparse_coo()
                 if edge_sampling:
-                    incidence_matrix_1 = torch.cat(
-                        [original_incidence_sparse, incidence_matrix_sampled],
-                        dim=1
-                    ).coalesce()
+                    if self.tnn_type == "CXN":
+                        incidence_matrix_sampled = incidence_matrix_sampled.to_dense()
+                        incidence_matrix_1 = torch.cat(
+                            [original_incidence_sparse, incidence_matrix_sampled],
+                            dim=1
+                        )
+                    else:
+                        incidence_matrix_1 = torch.cat(
+                            [original_incidence_sparse, incidence_matrix_sampled],
+                            dim=1
+                        ).to_sparse_coo()
                 else:
                     incidence_matrix_1 = original_incidence_sparse
                 incidence_matrix_1.requires_grad_(True)
@@ -640,17 +623,16 @@ class TNN_KNN_MLP_N(nn.Module):
                 # # Step 1: compute edge-edge adjacency via shared face
                 # Step 1: Build adjacency matrix
                 A = incidence_matrix_1.T @ incidence_matrix_1  # [num_edges, num_edges]
+                A = A.to_sparse() if self.tnn_type == "CXN" else A
 
                 # Step 2: Remove diagonal (self-loops) using element-wise multiplication
-                # num_tot_edges = A.size(0)
-                # identity_indices = torch.arange(num_tot_edges, device=A.device).repeat(2, 1)
-                # identity_values = torch.ones(num_tot_edges, device=A.device)
-                # identity_mask = torch.sparse_coo_tensor(identity_indices, identity_values, size=A.size()).coalesce()
-                #
-                # # Perform element-wise multiplication to remove diagonal entries
-                A_indices = A.indices()
-                mask = A_indices[0] == A_indices[1]
-                A._values()[~mask]
+                num_tot_edges = A.size(0)
+                identity_indices = torch.arange(num_tot_edges, device=A.device).repeat(2, 1)
+                identity_values = torch.ones(num_tot_edges, device=A.device)
+                identity_mask = torch.sparse_coo_tensor(identity_indices, identity_values, size=A.size()).coalesce()
+
+                # Perform element-wise multiplication to remove diagonal entries
+                A = A * (1 - identity_mask.to_dense())
 
                 # Step 3: Replace all 2s with 1, keeping 0s and 1s untouched (differentiably!)
                 A = torch.sparse_coo_tensor(
@@ -663,6 +645,7 @@ class TNN_KNN_MLP_N(nn.Module):
                 data.adjacency_1 = A
 
                 A_0 = incidence_matrix_1 @ incidence_matrix_1.T
+                A_0 = A_0.to_sparse() if self.tnn_type == "CXN" else A_0
 
                 num_tot_edges = A_0.size(0)
                 identity_indices = torch.arange(num_nodes, device=A_0.device).repeat(2, 1)
@@ -693,7 +676,10 @@ class TNN_KNN_MLP_N(nn.Module):
 
                 # Find cycles using networkx (non-differentiable step)
                 cycles = nx.cycle_basis(G)
-                cycles = [cycle for cycle in cycles if len(cycle) >= 3]  # Remove small cycles
+                cycles = [
+                    cycle for cycle in cycles if len(cycle) <= 3
+                ]
+                # cycles = [cycle for cycle in cycles if len(cycle) >= 3]  # Remove small cycles
 
                 # print(cycles)
                 if len(cycles) > 0:
@@ -726,7 +712,7 @@ class TNN_KNN_MLP_N(nn.Module):
                 # incidence_matrix_2= torch.div(incidence_matrix_2,2,rounding_mode='trunc')
 
                 data_for_lifting = {}
-
+                x_featured = self.feature_encoder(data)
                 data_for_lifting = {
                     "x_0": embeddings,  # Node features
                     "incidence_1": incidence_matrix_1,  # Node-to-edge incidence matrix
@@ -736,38 +722,31 @@ class TNN_KNN_MLP_N(nn.Module):
                 }
 
                 lifted_data = self.projection_sum(data_for_lifting)
-                # print("Lifted data keys:", lifted_data.keys())
-                # print(lifted_data)
-                # for key, value in lifted_data.items():
-                #     print(f"Key: {key}, Shape: {value.shape if isinstance(value, torch.Tensor) else 'Not a Tensor'}")
-                # print("Data keys:", data.keys)
-                # print(data)
 
-                # data = self.__create_laplacians(data, incidence_matrix_1, lifted_data, data_for_lifting)
 
                 lifted_data["adjacency_1"] = A
                 # print(lifted_data)
                 lifted_data["x_0"] = torch.div(lifted_data["x_0"], torch.max(self.k_v))
+                lifted_data["cell_statistics"] = cycles
                 # print(lifted_data)
                 lifted_data_obj = Data(**lifted_data)
                 tnn_output = self.tnn(lifted_data_obj)
-                # print("shapes tnn: ", tnn_output["x_0"].shape, tnn_output["x_1"].shape)
+
                 batch["incidence_1"] = incidence_matrix_1
 
                 batch["incidence_2"] = incidence_matrix_2
                 out = self.readout(tnn_output, batch)
+
                 # print(out)
                 return out["logits"]
 
             # print("data ": data)
         data = self.feature_encoder(data)
-            # print("data after feature encoder", data)
-            # print("shapes before tnn: ", data["x_0"].shape)
+
         tnn_output = self.tnn(data)
-        # print("shapes tnn: ", tnn_output["x_0"].shape, tnn_output["x_1"].shape)
         out = self.readout(tnn_output, batch)
-        # print(out)
         return out["logits"]
+
 
 def generate_graph_from_data(
         data: torch_geometric.data.Data

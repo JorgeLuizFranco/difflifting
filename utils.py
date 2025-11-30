@@ -51,13 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DiffLifting for GNN tasks")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--gnn", type=str, default="GIN", choices=["GIN", "GPS"])
-    parser.add_argument("--tnn", type=str, default="CXN", choices=["CWN", "SCN2", "CXN", "UniGCNII", "UniGIN", "UniGCN", "HyperGAT"])
+    parser.add_argument("--tnn", type=str, default="UniGIN", choices=["CWN", "SCN2", "CXN", "UniGCNII", "UniGIN", "UniGCN", "HyperGAT", "TOPOTUNE"])
     parser.add_argument(
         "--dataset",
         type=str,
-        default="Cora",
+        default="PROTEINS",
         choices=["Cora", "Citeseer", "Pubmed",   #Classic Node classification datasets
-                 "Roman-empire", "Amazon-ratings", "Minesweeper", "Tolokers", #Heterophilous Graph dataset
+             "CS", "Physics","Cornell", "Texas", "Wisconsin","chameleon", "crocodile", "squirrel", #Heterophilous Graph dataset
                  "ogbg-molhiv", "NCI1", "NCI109", "IMDB-BINARY",  # Graph Classification datasets
                  "REDDIT-BINARY", "ENZYMES", "PROTEINS", "DD", "MUTAG", "ZINC"],
     )
@@ -65,14 +65,14 @@ def parse_args() -> argparse.Namespace:
         "--lifting",
         type=str,
         default="diffLifting",
-        choices=["SimplicialCliqueLifting", "SimplicialKHopLifting","CellCycleLifting", "diffLifting", "HypergraphKHopLifting"],
+        choices=["SimplicialCliqueLifting", "SimplicialKHopLifting","CellCycleLifting", "DiscreteConfigurationComplexLifting",  "diffLifting", "HypergraphKHopLifting", "HypergraphKNNLifting", "HypergraphKernelLifting"],
     )
-    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate.")
+    parser.add_argument("--lr", type=float, default=0.005, help="Learning rate.")
     parser.add_argument("--weight_decay", type=float, default=0, help="Weight Decay.")
 
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
-    parser.add_argument("--num_layers", type=int, default=1, help="Number of tnn layers.")
-    parser.add_argument("--num_layers_gnn", type=int, default=1, help="Number of gnn layers ")
+    parser.add_argument("--num_layers", type=int, default=2, help="Number of tnn layers.")
+    parser.add_argument("--num_layers_gnn", type=int, default=2, help="Number of gnn layers ")
 
     parser.add_argument(
         "--max_epochs", type=int, default=1000, help="Number of epochs to train."
@@ -84,19 +84,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr_decay_patience", type=int, default=10)
     parser.add_argument("--logdir", type=str, default="results/", help="Log directory")
     parser.add_argument("--hidden_dim", type=int, default=64)
-    parser.add_argument("--gnn_embedding_dim", type=int, default=128)
-    parser.add_argument("--k_max", type=int, default=10)
+    parser.add_argument("--gnn_embedding_dim", type=int, default=32)
+    parser.add_argument("--k_max", type=int, default=3)
+    parser.add_argument("--k", type=int, default=3)
     parser.add_argument("--graph_transformer_n_heads", type=int, default=4)
     parser.add_argument("--positional_encoder_dim", type=int, default=4)
     parser.add_argument("--positional_walking_len", type=int, default=20)
     parser.add_argument("--depth", type=int, default=2)
-    parser.add_argument("--no_readout", action='store_true')
+    parser.add_argument("--no_readout", action='store_false')
     parser.add_argument("--signed", type=bool, default=False)
+    parser.add_argument("--use_dcm_split", action='store_true')
     parser.add_argument("--no-bn", dest="bn", action="store_false")
     parser.add_argument(
         "--deepset_aggr_type", type=str, default="sum", choices=["sum", "cat", "mean"]
     )
     parser.add_argument(
+        "--sub_gccn_model", type=str, default="GIN", choices=["GAT", "GCN" , "GIN"]
+    )
+    parser.add_argument(
         "--global_pooling", type=str, default="mean", choices=["sum", "mean"]
     )
+
+    parser.add_argument("--t", type=float, default=5, help="Temperature parameter for the heat kernel.")
+    parser.add_argument("--deterministic", action="store_true", help="Run without sampling, use deterministic neighbor and inclusion selection.")
+    parser.add_argument("--point_cloud", action="store_true", help="Disconnect graph edges and treat dataset as point clouds for diffLifting.")
+
     return parser.parse_args()

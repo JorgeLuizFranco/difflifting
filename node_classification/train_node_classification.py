@@ -35,11 +35,7 @@ def train_node(loader, model, loss_fn, optimizer, device, args=None,avg_accuracy
         out = model(batch)
         loss = loss_fn(out[batch.train_mask], batch.y[batch.train_mask]) / batch.num_graphs
         loss.backward()
-        # for name, param in model.named_parameters():
-        #     if param.grad is None:
-        #         print(f"No gradient for {name}")
-        #     elif param.grad.abs().mean() < 1e-10:
-        #         print(f"Near-zero gradient for {name}")
+
         optimizer.step()
         total_loss = loss.item()
     return total_loss / len(loader)

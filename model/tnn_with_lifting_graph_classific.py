@@ -2,6 +2,7 @@ import networkx as nx
 import torch
 import torch.nn as nn
 import torch_geometric
+from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.utils import is_undirected
 from torch_geometric.utils import to_undirected
@@ -256,8 +257,8 @@ def compute_node_cell_matrix(
 class TNN_KNN_MLP_G(nn.Module):
 
     def __init__(self, in_channels, args, hidden_dim, num_classes, k=2, diff_lifting=False, global_pool="sum",
-                 device="cpu", tnn_type="SCN2", num_layers_tnn=4, num_layers_gnn=3, embedding_dim=64, k_max=10):
-        super(TNN_KNN_MLP_G, self).__init__()
+             device="cpu", tnn_type="SCN2", num_layers_tnn=4, num_layers_gnn=3, embedding_dim=64, k_max=10, deterministic=False):
+        super().__init__()
         self.k = k
         self.k_min = 2
         self.k_max = k_max
@@ -266,15 +267,23 @@ class TNN_KNN_MLP_G(nn.Module):
         self.diff_lifting = diff_lifting
         self.tnn_type = tnn_type
         self.num_classes = num_classes
-
+        self.dataset = args.dataset
         self.feature_encoder = AllCellFeatureEncoder(in_channels=[in_channels,in_channels,in_channels], out_channels=hidden_dim,
-                                                    proj_dropout=0.5)
+                                                  proj_dropout=0.5)
+        if args.dataset == "ogbg-molhiv":
+
+            self.atom_encoder = AtomEncoder(emb_dim=in_channels)
+
         if diff_lifting:
 
             if args.gnn == "GIN":
                 self.gnn = GIN(in_channels, embedding_dim, embedding_dim, num_layers_gnn).to(device)
             elif args.gnn == "GPS":
-                self.gnn = GPS(in_channels, embedding_dim, args.positional_walking_len, num_layers_gnn).to(device)
+                if args.dataset == "ZINC":
+                    self.gnn = GPS(in_channels, embedding_dim, args.positional_walking_len, num_layers_gnn, is_zinc=True).to(device)
+                else:
+                    self.gnn = GPS(in_channels, embedding_dim, args.positional_walking_len, num_layers_gnn).to(device)
+
             self.pool = global_mean_pool
             self.k = k
 
@@ -331,7 +340,8 @@ class TNN_KNN_MLP_G(nn.Module):
             in_channels_1=hidden_dim,
             in_channels_2=hidden_dim,
             n_layers=num_layers_tnn,
-            device=device
+            device=device,
+            sub_gccn=args.sub_gccn_model
         )
 
 
@@ -383,7 +393,10 @@ class TNN_KNN_MLP_G(nn.Module):
     def forward(self, batch):
         data = batch
         if self.diff_lifting:
-            x, edge_index = data.x.float(), data.edge_index
+            x, edge_index = data.x, data.edge_index
+            if self.dataset=="ogbg-molhiv":
+                x = self.atom_encoder(x).float()  # x is input atom feature
+
             #print("Initial data.x shape:", data.x.shape)  # Initial shape
             edge_index_undirected, vertex_slice, new_slices, data.batch = remove_duplicate_edges(data)
 
@@ -395,26 +408,20 @@ class TNN_KNN_MLP_G(nn.Module):
 
             #print("embeddings requires_grad:", embeddings.requires_grad)
 
-            k_logits = self.k_mlp(embedding_mean)  # Shape: [1, k_max - k_min + 1]
-
-
-            k_sample = F.gumbel_softmax(k_logits, tau=1.0, hard=True)
-
-            #print("k_sample:", k_sample)
-
-            k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
-
-            #print("k_range:", k_range)
-
-
-            # Compute the differentiable integer sample as the dot product of the one-hot vector and the range tensor.
-            k_v = torch.sum(k_sample * k_range, dim=-1)  # Shape: [1]
-
-            #print("k_v:", k_v)
-            #print("k_v grad:", k_v.grad)
-
-            self.k_v = k_v
-
+            # --- k_v sampling ---
+            if getattr(self, "deterministic", False):
+                k_logits = self.k_mlp(embedding_mean)
+                p = F.softmax(k_logits, dim=-1)
+                k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
+                k_v = (p * k_range.unsqueeze(0)).sum(dim=-1)
+                k_v = k_v.round()
+                self.k_v = k_v
+            else:
+                k_logits = self.k_mlp(embedding_mean)
+                k_sample = F.gumbel_softmax(k_logits, tau=1.0, hard=True)
+                k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
+                k_v = torch.sum(k_sample * k_range, dim=-1)
+                self.k_v = k_v
 
             mask_knn = torch.nn.functional.one_hot(data.batch_0, num_classes=vertex_slice.shape[0] - 1)
 
@@ -426,6 +433,7 @@ class TNN_KNN_MLP_G(nn.Module):
 
             if (self.tnn_type == "UniGCNII" or self.tnn_type == "UniGCN" or
                 self.tnn_type == "HyperGAT" or self.tnn_type == "UniGIN" or self.tnn_type == "UniSAGE"):
+
                 knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
                 aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(self.k_v.shape[0], -1)
                 kv_mask = aranged_indices < k_v.unsqueeze(1)
@@ -434,9 +442,13 @@ class TNN_KNN_MLP_G(nn.Module):
                 knn_indices = knn_selected
                 pooled_embeddings = embeddings[knn_indices.long()].mean(axis=1, keepdim=True).squeeze()
 
+                # --- inclusion sampling ---
                 include_probs = torch.sigmoid(self.mlp(pooled_embeddings))  # Shape: [num_nodes, 1]
-                inclusion_samples = (torch.rand_like(include_probs) < include_probs).float()
-                straight_through_samples = inclusion_samples + (include_probs - include_probs.detach())
+                if getattr(self, "deterministic", False):
+                    straight_through_samples = (include_probs > 0.5).float()
+                else:
+                    inclusion_samples = (torch.rand_like(include_probs) < include_probs).float()
+                    straight_through_samples = inclusion_samples + (include_probs - include_probs.detach())
 
                 num_edges = edge_index_undirected.size(1)
 
@@ -446,6 +458,7 @@ class TNN_KNN_MLP_G(nn.Module):
                     incidence_matrix_1[edge[0], idx] = 1
                     incidence_matrix_1[edge[1], idx] = 1
 
+        
                 num_nodes = data.x.size(0)
 
                 mask = torch.zeros((num_nodes, num_nodes), device=data.x.device)
@@ -469,8 +482,21 @@ class TNN_KNN_MLP_G(nn.Module):
 
                 #print("data.x_0 after division:", data.x_0.shape)
 
-                data.incidence_1 = incidence_matrix_1
-                data.incidence_1 = torch.Tensor(data.incidence_1).to_sparse_coo()
+                col_sums = incidence_matrix_1.sum(dim=0)              # [total_cols]
+
+                # 2) Build keep‐mask
+                keep = col_sums > 0                                   # [total_cols], bool
+
+                # # Print the number of columns before and after pruning
+                # print(f"Number of columns before pruning: {incidence_matrix_1.size(1)}")
+                # print(f"Number of columns after pruning: {keep.sum().item()}")
+
+                # 3) Index out zero columns (gather on dim=1 preserves grads)
+                incidence_pruned = incidence_matrix_1[:, keep]        # [num_nodes, num_kept]
+
+                # 4) Convert to sparse‐COO if that’s what your pipeline expects
+                data.incidence_1 = incidence_pruned.to_sparse_coo()
+            
 
                 
 
@@ -617,12 +643,22 @@ class TNN_KNN_MLP_G(nn.Module):
                     original_incidence[edge[1], idx] = 1
 
 
-                original_incidence_sparse = original_incidence.to_sparse_coo()
+                if self.tnn_type == "CXN":
+                    original_incidence_sparse = original_incidence
+                else:
+                    original_incidence_sparse = original_incidence.to_sparse_coo()
                 if edge_sampling:
-                    incidence_matrix_1 = torch.cat(
-                        [original_incidence_sparse, incidence_matrix_sampled],
-                        dim=1
-                    ).coalesce()
+                    if self.tnn_type == "CXN":
+                        incidence_matrix_sampled = incidence_matrix_sampled.to_dense()
+                        incidence_matrix_1 = torch.cat(
+                            [original_incidence_sparse, incidence_matrix_sampled],
+                            dim=1
+                        )
+                    else:
+                        incidence_matrix_1 = torch.cat(
+                            [original_incidence_sparse, incidence_matrix_sampled],
+                            dim=1
+                        ).to_sparse_coo()
                 else:
                     incidence_matrix_1 = original_incidence_sparse
                 incidence_matrix_1.requires_grad_(True)
@@ -630,6 +666,7 @@ class TNN_KNN_MLP_G(nn.Module):
                 # # Step 1: compute edge-edge adjacency via shared face
                 # Step 1: Build adjacency matrix
                 A = incidence_matrix_1.T @ incidence_matrix_1  # [num_edges, num_edges]
+                A = A.to_sparse() if self.tnn_type == "CXN" else A
 
                 # Step 2: Remove diagonal (self-loops) using element-wise multiplication
                 num_tot_edges = A.size(0)
@@ -651,6 +688,7 @@ class TNN_KNN_MLP_G(nn.Module):
                 data.adjacency_1 = A
 
                 A_0=  incidence_matrix_1 @ incidence_matrix_1.T
+                A_0 = A_0.to_sparse() if self.tnn_type == "CXN" else A_0
 
                 num_tot_edges = A_0.size(0)
                 identity_indices = torch.arange(num_nodes, device=A_0.device).repeat(2, 1)
@@ -681,8 +719,12 @@ class TNN_KNN_MLP_G(nn.Module):
 
                 # Find cycles using networkx (non-differentiable step)
                 cycles = nx.cycle_basis(G)
-                cycles = [cycle for cycle in cycles if len(cycle) >= 3]  # Remove small cycles
-
+                if self.dataset != "ogbg-molhiv":
+                    cycles = [cycle for cycle in cycles if len(cycle) >= 3]  # Remove small cycles
+                else:
+                    cycles = [
+                        cycle for cycle in cycles if len(cycle) <= 6
+                    ]
                 #print(cycles)
                 if len(cycles)> 0:
                     polled_cycles, node_cell_matrix = compute_node_cell_matrix(cycles, embeddings, self.edge_mlp)
@@ -720,24 +762,18 @@ class TNN_KNN_MLP_G(nn.Module):
                 data_for_lifting = {
                     "x_0": embeddings,  # Node features
                     "incidence_1": incidence_matrix_1,  # Node-to-edge incidence matrix
-                    "incidence_2": incidence_matrix_2,  # edge_to-triangle
+                    "incidence_2": incidence_matrix_2,  # edge_to_triangle
                     "adjacency_1": A,
                     "adjacency_0": A_0
                 }
 
                 lifted_data = self.projection_sum(data_for_lifting)
-                #print("Lifted data keys:", lifted_data.keys())
-                #print(lifted_data)
-                # for key, value in lifted_data.items():
-                #     print(f"Key: {key}, Shape: {value.shape if isinstance(value, torch.Tensor) else 'Not a Tensor'}")
-                # print("Data keys:", data.keys)
-                # print(data)
-
-                #data = self.__create_laplacians(data, incidence_matrix_1, lifted_data, data_for_lifting)
 
                 lifted_data["adjacency_1"] = A
                 #print(lifted_data)
                 lifted_data["x_0"] = torch.div(lifted_data["x_0"], torch.max(self.k_v))
+                lifted_data["cell_statistics"] = cycles
+
                 #print(lifted_data)
                 lifted_data_obj = Data(**lifted_data)
                 tnn_output = self.tnn(lifted_data_obj)
@@ -745,6 +781,7 @@ class TNN_KNN_MLP_G(nn.Module):
                 batch["incidence_1"]= incidence_matrix_1
 
                 batch["incidence_2"]= incidence_matrix_2
+
                 out = self.readout(tnn_output, batch)
                 # print(out)
                 return out["logits"]
@@ -810,3 +847,6 @@ def generate_graph_from_data(
     graph.add_nodes_from(nodes)
     graph.add_edges_from(edges)
     return graph
+
+
+

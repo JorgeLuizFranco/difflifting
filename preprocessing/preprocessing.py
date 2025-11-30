@@ -7,8 +7,6 @@ def remove_duplicate_edges(batch):
         batch = batch.clone().detach()
 
         device = batch.x.device
-        # Computing the equivalent of batch over edges.
-        #            edge_slices = torch.tensor(batch._slice_dict["edge_index"], device=device)
         edge_slices = batch._slice_dict["edge_index"].clone().detach()
         edge_slices = edge_slices.to(device)
 
@@ -40,8 +38,7 @@ def remove_duplicate_edges_for_nodes_dataset(data):
         data = data.clone().detach()
 
         device = data.x.device
-        # Computing the equivalent of batch over edges.
-        #            edge_slices = torch.tensor(batch._slice_dict["edge_index"], device=device)
+
         RemoveDuplicatedEdges()
         edge_slices = data.edge_index
         # edge_slices = data._slice_dict["edge_index"].clone().detach()

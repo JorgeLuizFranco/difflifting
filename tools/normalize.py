@@ -27,13 +27,11 @@ def normalize_matrix(matrix, dim=0, apply_normalization=True):
     if not apply_normalization:
         return matrix
 
-    # Converter a matriz para formato denso no início
     matrix_dense = matrix.to_dense()
 
     n = matrix_dense.shape[0]
     identity = torch.eye(n, device=matrix_dense.device)
 
-    # Adicionar a identidade ao gráfico
     if dim > 0:
         matrix_dense += 2 * identity
     else:
@@ -42,15 +40,11 @@ def normalize_matrix(matrix, dim=0, apply_normalization=True):
     abs_matrix = torch.abs(matrix_dense)
     row_sum = abs_matrix.sum(dim=1)
 
-    # Evitar divisões por zero
     row_sum = torch.where(row_sum != 0, row_sum, torch.tensor(1.0, device=row_sum.device))
     inv_sqrt_row_sum = 1.0 / torch.sqrt(row_sum)
 
-    # Criar a matriz diagonal densa
     diag_matrix = torch.diag(inv_sqrt_row_sum)
 
-    # Normalizar a matriz
     normalized_matrix = diag_matrix @ matrix_dense @ diag_matrix
 
-    # Retornar no formato denso
     return normalized_matrix

@@ -26,6 +26,8 @@ triangle_counts = []  # Add this list to store triangle counts
 torch.autograd.set_detect_anomaly(True)
 import tempfile
 
+# torch.set_default_tensor_type("torch.cuda.FloatTensor")
+# torch.set_float32_matmul_precision("high")
 if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -40,7 +42,7 @@ if __name__ == '__main__':
 
 
 
-    diff_lifting = args.lifting
+    diff_lifting = True if args.lifting == "diffLifting" else False
     avg_accuracy=None
     if args.lifting=="DCMLifting":
         torch.set_default_tensor_type("torch.cuda.FloatTensor")
@@ -85,19 +87,20 @@ if __name__ == '__main__':
         }
         model = DCMModule(hyperparams)
     else:
-        model = TNN_KNN_MLP_N(num_features, args, hidden_dim=64, num_classes=num_classes,
+        model = TNN_KNN_MLP_N(num_features, args, hidden_dim=args.hidden_dim, num_classes=num_classes,
                               k=6, diff_lifting=diff_lifting, global_pool=args.global_pooling, device=device,
                               tnn_type=args.tnn,
                               num_layers_tnn=args.num_layers, num_layers_gnn=args.num_layers_gnn,
-                              embedding_dim=args.gnn_embedding_dim)
+                              embedding_dim=args.gnn_embedding_dim,
+                              k_max=args.k_max)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
 
-    def train_eval(model, loss_fn, optimizer, evaluator, args, device):
-        train_loss = train_node(train_loader, model, loss_fn, optimizer, device, args, avg_accuracy, **config)
-        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",args,evaluator)
-        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", args,evaluator)
+    def train_eval(model, loss_fn, optimizer, evaluator, epoch, device):
+        train_loss = train_node(train_loader, model, loss_fn, optimizer, device)
+        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",evaluator)
+        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", evaluator)
         return train_loss, val_loss, val_acc, test_loss, test_acc
 
 
@@ -134,7 +137,7 @@ if __name__ == '__main__':
             loss_fn,
             optimizer,
             evaluator,
-            args,
+            epoch,
             device
         )
 

@@ -1,4 +1,3 @@
-"""HyperGat Layer."""
 
 import torch
 

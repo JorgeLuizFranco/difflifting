@@ -66,7 +66,7 @@ class AllCellFeatureEncoder(AbstractFeatureEncoder):
             selected_dimensions
             if (
                 selected_dimensions is not None
-            )  # and len(selected_dimensions) <= len(self.in_channels))
+            )
             else range(len(self.in_channels))
         )
         for i in self.dimensions:
