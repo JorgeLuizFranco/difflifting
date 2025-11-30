@@ -96,7 +96,7 @@ if __name__ == '__main__':
 
 
     def train_eval(model, loss_fn, optimizer, evaluator, args, device):
-        train_loss = train_node(train_loader, model, loss_fn, optimizer, device, args=args)
+        train_loss = train_node(train_loader, model, loss_fn, optimizer, device, args=args, **config)
         val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",args=args, evaluator=evaluator)
         test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", args=args, evaluator=evaluator)
         return train_loss, val_loss, val_acc, test_loss, test_acc
