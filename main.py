@@ -1,5 +1,5 @@
 import argparse
-
+import numpy
 import torch
 from torch import tensor
 from torch.optim import Adam
@@ -39,8 +39,6 @@ if __name__ == '__main__':
     train_loader = data[0]
     val_loader = data[1]
     test_loader = data[2]
-
-
 
     diff_lifting = True if args.lifting == "diffLifting" else False
     avg_accuracy=None
@@ -97,10 +95,10 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
 
-    def train_eval(model, loss_fn, optimizer, evaluator, epoch, device):
-        train_loss = train_node(train_loader, model, loss_fn, optimizer, device)
-        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",evaluator)
-        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", evaluator)
+    def train_eval(model, loss_fn, optimizer, evaluator, args, device):
+        train_loss = train_node(train_loader, model, loss_fn, optimizer, device, args=args)
+        val_loss, val_acc = evaluate_node(model, val_loader, loss_fn, device, "val_mask",args=args, evaluator=evaluator)
+        test_loss, test_acc = evaluate_node(model, test_loader, loss_fn, device, "test_mask", args=args, evaluator=evaluator)
         return train_loss, val_loss, val_acc, test_loss, test_acc
 
 
@@ -137,7 +135,7 @@ if __name__ == '__main__':
             loss_fn,
             optimizer,
             evaluator,
-            epoch,
+            args,
             device
         )
 
