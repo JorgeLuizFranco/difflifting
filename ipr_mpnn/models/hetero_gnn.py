@@ -111,7 +111,7 @@ class HeteroGINEConv(MessagePassing):
         if edge_attr is not None and self.edge_encoder is not None:
             edge_attr = self.edge_encoder(edge_attr)
 
-        out = self.propagate(edge_index, x=x, edge_attr=edge_attr, edge_weight=edge_weight)
+        out = self.propagate(edge_index, x=x, edge_attr=None, edge_weight=None)
 
         x_dst = (1 + self.eps) * x[1]
         x_dst = self.lin_dst(x_dst)
@@ -120,6 +120,8 @@ class HeteroGINEConv(MessagePassing):
         return self.mlp(out, batch)
 
     def message(self, x_j, edge_attr, edge_weight):
+        edge_attr = None
+        edge_weight = None
         if edge_weight is not None and edge_weight.ndim < 2:
             edge_weight = edge_weight[:, None]
         m = F.gelu(x_j + edge_attr) if edge_attr is not None else x_j

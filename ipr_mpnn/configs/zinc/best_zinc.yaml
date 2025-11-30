@@ -25,7 +25,7 @@ encoder: none
 
 #scorer_model: none
 scorer_model:
-    conv: gine
+    conv: gin
     hidden: 128
     num_conv_layers: 0
     num_mlp_layers: 2
@@ -36,7 +36,7 @@ scorer_model:
 
 # extract the base nodes to super nodes
 base2centroid:
-    conv: gine
+    conv: gin
     num_conv_layers: 2
     num_mlp_layers: 3
     norm: batch_norm
