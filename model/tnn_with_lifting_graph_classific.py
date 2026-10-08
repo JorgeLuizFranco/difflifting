@@ -123,15 +123,19 @@ def compute_node_cell_matrix(
     cycles: list[list[int]],
     embeddings: torch.Tensor,
     cell_mlp: torch.nn.Module,
-    sharpening_factor: float = 10.0
+    sharpening_factor: float = 10.0,
+    stochastic: bool = False,
 ):
     """
     cycles:    list of C cycles (each a list of node indices)
     embeddings:[N, D] node embeddings
     cell_mlp:  Module mapping [C, D] → [C, 2] logits
+    stochastic: sample inclusions instead of thresholding
     returns:
       pooled:             [C, D] mean‑pooled cycle embeddings
-      incidence_sampled:  sparse [N, C] with STE inclusion values
+      incidence_sampled:  sparse [N, C'] with STE inclusion values
+      kept_cycles:        [C'] indices of the kept cycles
+      cell_ste:           [C] STE inclusion value per candidate cycle
     """
     device = embeddings.device
     N, _ = embeddings.shape
@@ -157,7 +161,10 @@ def compute_node_cell_matrix(
     cell_probs = F.softmax(sharp_logits, dim=-1)[:, 1]         # sharpened p(class=1), [C]
 
     # 4) Straight‑through estimator
-    cell_hard = (cell_probs > 0.5).float()                    # [C], 0 or 1
+    if stochastic:
+        cell_hard = torch.bernoulli(cell_probs)               # [C], 0 or 1
+    else:
+        cell_hard = (cell_probs > 0.5).float()                # [C], 0 or 1
     cell_ste  = cell_hard + (cell_probs - cell_probs.detach())# [C], STE
 
     # ⚠️ Check if no cycle was selected
@@ -170,7 +177,7 @@ def compute_node_cell_matrix(
             size=(N, 0),
             device=device
         ).coalesce()
-        return pooled, node_cell
+        return pooled, node_cell, torch.empty(0, dtype=torch.long, device=device), cell_ste
 
 
     # 5) Scatter these into a sparse [N, C] incidence matrix
@@ -209,7 +216,7 @@ def compute_node_cell_matrix(
             size=(N, 0),
             device=device
         ).coalesce()
-        return pooled, node_cell_sampled
+        return pooled, node_cell_sampled, torch.empty(0, dtype=torch.long, device=device), cell_ste
     # 3. Duplicate mask to match the flattened indices length
     #    Here each index in `indices` refers directly to a cycle,
     #    so we just index by the second row:
@@ -232,7 +239,7 @@ def compute_node_cell_matrix(
             device=device,
             requires_grad=True
         ).coalesce()
-        return pooled, node_cell_empty
+        return pooled, node_cell_empty, kept_cycles, cell_ste
 
     # remap columns 0..C‑1 → 0..C'‑1
     new_ids = torch.arange(kept_cycles.size(0), device=device)
@@ -252,7 +259,7 @@ def compute_node_cell_matrix(
         requires_grad=True
     ).coalesce()
 
-    return pooled, node_cell_pruned
+    return pooled, node_cell_pruned, kept_cycles, cell_ste
 
 class TNN_KNN_MLP_G(nn.Module):
 
@@ -262,6 +269,7 @@ class TNN_KNN_MLP_G(nn.Module):
         self.k = k
         self.k_min = 2
         self.k_max = k_max
+        self.deterministic = deterministic
 
         self.triangle_count = 0  # Add this to track triangles
         self.diff_lifting = diff_lifting
@@ -310,6 +318,11 @@ class TNN_KNN_MLP_G(nn.Module):
                     nn.ReLU(),
                     nn.Linear(64, 2)  # Output logits for two classes (0 and 1)
                 )
+                self.cell_mlp = nn.Sequential(
+                    nn.Linear(embedding_dim, 64),  # Input: pooled cycle embeddings
+                    nn.ReLU(),
+                    nn.Linear(64, 2)  # Output logits for two classes (0 and 1)
+                )
                 # self.mlp_cell2 = nn.Sequential(
                 #     nn.Linear(128, 2 * hidden_dim),  # Change input dimension to 128
                 #     nn.ReLU(),
@@ -355,7 +368,7 @@ class TNN_KNN_MLP_G(nn.Module):
         else:
             self.readout = PropagateSignalDown(**{
                 "readout_name": "PropagateSignalDownLinear",
-                "num_cell_dimensions": 3,
+                "num_cell_dimensions": 2 if tnn_type in HYPERGRAPH_MODULES else 3,
                 "hidden_dim": hidden_dim,
                 "out_channels": num_classes,
                 "task_level": "graph",
@@ -409,19 +422,16 @@ class TNN_KNN_MLP_G(nn.Module):
             #print("embeddings requires_grad:", embeddings.requires_grad)
 
             # --- k_v sampling ---
-            if getattr(self, "deterministic", False):
-                k_logits = self.k_mlp(embedding_mean)
-                p = F.softmax(k_logits, dim=-1)
-                k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
-                k_v = (p * k_range.unsqueeze(0)).sum(dim=-1)
-                k_v = k_v.round()
-                self.k_v = k_v
+            k_logits = self.k_mlp(embedding_mean)
+            k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
+            k_soft = (F.softmax(k_logits, dim=-1) * k_range.unsqueeze(0)).sum(dim=-1)
+            if self.deterministic or not self.training:
+                k_hard = k_range[k_logits.argmax(dim=-1)]
             else:
-                k_logits = self.k_mlp(embedding_mean)
                 k_sample = F.gumbel_softmax(k_logits, tau=1.0, hard=True)
-                k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
-                k_v = torch.sum(k_sample * k_range, dim=-1)
-                self.k_v = k_v
+                k_hard = torch.sum(k_sample * k_range, dim=-1)
+            k_v = k_hard + (k_soft - k_soft.detach())
+            self.k_v = k_v
 
             mask_knn = torch.nn.functional.one_hot(data.batch_0, num_classes=vertex_slice.shape[0] - 1)
 
@@ -434,9 +444,12 @@ class TNN_KNN_MLP_G(nn.Module):
             if (self.tnn_type == "UniGCNII" or self.tnn_type == "UniGCN" or
                 self.tnn_type == "HyperGAT" or self.tnn_type == "UniGIN" or self.tnn_type == "UniSAGE"):
 
-                knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
-                aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(self.k_v.shape[0], -1)
-                kv_mask = aranged_indices < k_v.unsqueeze(1)
+                top_k = torch.max(self.k_v).long().item()
+                neg_topk = torch.topk(-distances, top_k, dim=-1)
+                knn_indices = neg_topk[1]
+                in_graph = (-neg_topk[0]) < 1e6
+                aranged_indices = torch.arange(top_k, device=x.device).expand(self.k_v.shape[0], -1)
+                kv_mask = (aranged_indices < k_v.unsqueeze(1)) & in_graph
                 first_neighbor = knn_indices[:, 0].unsqueeze(1)
                 knn_selected = torch.where(kv_mask, knn_indices, first_neighbor)
                 knn_indices = knn_selected
@@ -444,11 +457,11 @@ class TNN_KNN_MLP_G(nn.Module):
 
                 # --- inclusion sampling ---
                 include_probs = torch.sigmoid(self.mlp(pooled_embeddings))  # Shape: [num_nodes, 1]
-                if getattr(self, "deterministic", False):
-                    straight_through_samples = (include_probs > 0.5).float()
+                if self.deterministic or not self.training:
+                    inclusion_samples = (include_probs > 0.5).float()
                 else:
-                    inclusion_samples = (torch.rand_like(include_probs) < include_probs).float()
-                    straight_through_samples = inclusion_samples + (include_probs - include_probs.detach())
+                    inclusion_samples = torch.bernoulli(include_probs)
+                straight_through_samples = inclusion_samples + (include_probs - include_probs.detach())
 
                 num_edges = edge_index_undirected.size(1)
 
@@ -465,13 +478,16 @@ class TNN_KNN_MLP_G(nn.Module):
 
                 node_triangle_matrix = mask.scatter_(1, knn_indices, straight_through_samples.repeat(1, torch.max(self.k_v).long().item()))
 
+                # hyperedge of node v: its k_v nearest neighbors (v included)
+                hyperedge_incidence = node_triangle_matrix.transpose(0, 1)
+
                 # This is not used, but we keep it for future use
-                incidence_matrix_2 = incidence_matrix_1.T @ node_triangle_matrix
+                incidence_matrix_2 = incidence_matrix_1.T @ hyperedge_incidence
                 incidence_matrix_2 = torch.div(incidence_matrix_2, 2, rounding_mode='trunc')
                 # ---- # ----- # ----- #
 
                 #print("incidence matrix before concatenation:", incidence_matrix_1.shape)
-                incidence_matrix_1 = torch.cat((incidence_matrix_1, node_triangle_matrix), dim=1)
+                incidence_matrix_1 = torch.cat((incidence_matrix_1, hyperedge_incidence), dim=1)
 
                 #print("incidence matrix after concatenation:", incidence_matrix_1.shape)
                 #print(incidence_matrix_1.grad_fn)
@@ -513,9 +529,15 @@ class TNN_KNN_MLP_G(nn.Module):
             ## Now the Cellular Complex Diff Lifiting
             else:
 
-                knn_indices = torch.topk(-distances, torch.max(self.k_v).long().item(), dim=-1)[1]
-                aranged_indices = torch.arange(torch.max(self.k_v).long().item(), device=x.device).expand(self.k_v.shape[0], -1)
-                kv_mask = aranged_indices < k_v.unsqueeze(1)
+                eye = torch.eye(distances.size(0), device=distances.device)
+                distances = distances + eye * 1e7
+
+                top_k = torch.max(self.k_v).long().item()
+                neg_topk = torch.topk(-distances, top_k, dim=-1)
+                knn_indices = neg_topk[1]
+                in_graph = (-neg_topk[0]) < 1e6
+                aranged_indices = torch.arange(top_k, device=x.device).expand(self.k_v.shape[0], -1)
+                kv_mask = (aranged_indices < k_v.unsqueeze(1)) & in_graph
                 first_neighbor = knn_indices[:, 0].unsqueeze(1)
                 knn_selected = torch.where(kv_mask, knn_indices, first_neighbor)
                 knn_indices = knn_selected
@@ -556,7 +578,10 @@ class TNN_KNN_MLP_G(nn.Module):
                 edge_probs = torch.softmax(edge_logits * sharpening_factor, dim=-1)[:, 1]  # Sharpened probability of class 1
 
                 # Step 3: Apply straight-through estimator
-                edge_classes = (edge_probs > 0.5).float()  # Binary values (0 or 1) during forward pass
+                if self.deterministic or not self.training:
+                    edge_classes = (edge_probs > 0.5).float()  # Binary values (0 or 1) during forward pass
+                else:
+                    edge_classes = torch.bernoulli(edge_probs)
                 edge_classes = edge_classes + (edge_probs - edge_probs.detach())  # Preserve gradients
 
 
@@ -727,9 +752,50 @@ class TNN_KNN_MLP_G(nn.Module):
                     ]
                 #print(cycles)
                 if len(cycles)> 0:
-                    polled_cycles, node_cell_matrix = compute_node_cell_matrix(cycles, embeddings, self.edge_mlp)
+                    polled_cycles, node_cell_matrix, kept_cycles, cell_gates = compute_node_cell_matrix(
+                        cycles, embeddings, self.cell_mlp,
+                        stochastic=(self.training and not self.deterministic),
+                    )
                     if node_cell_matrix._nnz() > 0:
-                        incidence_matrix_2= incidence_matrix_1.T @ node_cell_matrix
+                        # Boundary of each kept cycle: its consecutive edges.
+                        edge_cols = {}
+                        for col, edge in enumerate(edge_index_undirected.T.tolist()):
+                            key = (min(edge[0], edge[1]), max(edge[0], edge[1]))
+                            edge_cols.setdefault(key, []).append(col)
+                        if edge_sampling:
+                            kept_pairs = torch.stack(
+                                [rows_u[kept_cols], rows_v[kept_cols]], dim=1
+                            ).tolist()
+                            for offset, pair in enumerate(kept_pairs):
+                                key = (min(pair[0], pair[1]), max(pair[0], pair[1]))
+                                edge_cols.setdefault(key, []).append(num_edges + offset)
+                        b_rows, b_cols, b_vals = [], [], []
+                        for new_c, old_c in enumerate(kept_cycles.tolist()):
+                            cyc = cycles[old_c]
+                            for i in range(len(cyc)):
+                                u, w = cyc[i], cyc[(i + 1) % len(cyc)]
+                                key = (min(u, w), max(u, w))
+                                for col in edge_cols.get(key, []):
+                                    b_rows.append(col)
+                                    b_cols.append(new_c)
+                                    b_vals.append(cell_gates[old_c])
+                        if b_rows:
+                            incidence_matrix_2 = torch.sparse_coo_tensor(
+                                torch.tensor([b_rows, b_cols], device=embeddings.device),
+                                torch.stack(b_vals),
+                                size=(incidence_matrix_1.size(1), kept_cycles.numel()),
+                                device=embeddings.device,
+                            ).coalesce()
+                        else:
+                            num_edges_fake = incidence_matrix_1.size(1)
+                            dummy_indices = torch.empty((2, 0), dtype=torch.long, device=incidence_matrix_1.device)
+                            dummy_values = torch.empty((0,), device=incidence_matrix_1.device)
+                            incidence_matrix_2 = torch.sparse_coo_tensor(
+                                dummy_indices,
+                                dummy_values,
+                                size=(num_edges_fake, 2),
+                                device=incidence_matrix_1.device
+                            ).coalesce()
                     else:
                         num_edges_fake = incidence_matrix_1.size(1)  # Number of edges
                         dummy_indices = torch.empty((2, 0), dtype=torch.long, device=incidence_matrix_1.device)  # No non-zero entries

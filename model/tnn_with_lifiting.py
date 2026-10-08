@@ -313,7 +313,7 @@ class TNN_KNN_MLP_N(nn.Module):
         else:
             self.readout = PropagateSignalDown(**{
                 "readout_name": "PropagateSignalDownLinear",
-                "num_cell_dimensions": 3,
+                "num_cell_dimensions": 2 if tnn_type in HYPERGRAPH_MODULES else 3,
                 "hidden_dim": hidden_dim,
                 "out_channels": hidden_dim,
                 "task_level": "node",
