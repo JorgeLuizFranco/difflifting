@@ -494,10 +494,6 @@ class TNN_KNN_MLP_G(nn.Module):
                 
                 data.x_0 = x.float()
 
-                data.x_0 = torch.div(data.x_0, torch.max(self.k_v))
-
-                #print("data.x_0 after division:", data.x_0.shape)
-
                 col_sums = incidence_matrix_1.sum(dim=0)              # [total_cols]
 
                 # 2) Build keep‐mask
@@ -751,6 +747,7 @@ class TNN_KNN_MLP_G(nn.Module):
                         cycle for cycle in cycles if len(cycle) <= 6
                     ]
                 #print(cycles)
+                cell_sizes = None
                 if len(cycles)> 0:
                     polled_cycles, node_cell_matrix, kept_cycles, cell_gates = compute_node_cell_matrix(
                         cycles, embeddings, self.cell_mlp,
@@ -786,6 +783,11 @@ class TNN_KNN_MLP_G(nn.Module):
                                 size=(incidence_matrix_1.size(1), kept_cycles.numel()),
                                 device=embeddings.device,
                             ).coalesce()
+                            cell_sizes = torch.tensor(
+                                [len(cycles[c]) for c in kept_cycles.tolist()],
+                                dtype=embeddings.dtype,
+                                device=embeddings.device,
+                            )
                         else:
                             num_edges_fake = incidence_matrix_1.size(1)
                             dummy_indices = torch.empty((2, 0), dtype=torch.long, device=incidence_matrix_1.device)
@@ -836,8 +838,10 @@ class TNN_KNN_MLP_G(nn.Module):
                 lifted_data = self.projection_sum(data_for_lifting)
 
                 lifted_data["adjacency_1"] = A
-                #print(lifted_data)
-                lifted_data["x_0"] = torch.div(lifted_data["x_0"], torch.max(self.k_v))
+                # scaled sum projection: each cell averages its member nodes
+                lifted_data["x_1"] = lifted_data["x_1"] / 2
+                if cell_sizes is not None and lifted_data["x_2"].size(0) == cell_sizes.numel():
+                    lifted_data["x_2"] = lifted_data["x_2"] / (2 * cell_sizes.unsqueeze(1))
                 lifted_data["cell_statistics"] = cycles
 
                 #print(lifted_data)
