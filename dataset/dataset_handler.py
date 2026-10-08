@@ -427,7 +427,7 @@ def choose_dataset(args, device):
     if args.dataset in NODES_PREDICTION_DATASET:
         return get_node_prediction_dataset(args.dataset, args)
     else:
-        return get_graph_classification_dataset(args.dataset, args.batch_size, args, device)
+        return get_graph_classification_dataset(args.dataset, args.batch_size, args, device, seed=args.seed)
 
 def add_positional_encoding(args, dataset):
     positional_encoder = AddRandomWalkPE(walk_length=args.positional_walking_len, attr_name='pe')
