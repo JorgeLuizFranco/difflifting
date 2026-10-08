@@ -109,7 +109,7 @@ if __name__ == '__main__':
             f"Test Loss: {test_loss:.3f}, Test Acc: {test_accuracies[-1]:.3f}"
         )
 
-        scheduler.step(test_acc)
+        scheduler.step(val_acc)
 
         if epoch > 2 and val_accuracies[-1] <= val_accuracies[-2 - epochs_no_improve]:
             epochs_no_improve = epochs_no_improve + 1
