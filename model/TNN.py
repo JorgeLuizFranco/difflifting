@@ -41,6 +41,8 @@ class TNN(nn.Module):
         super().__init__()
         if model_type == "CWN":
             self.base_model = CWN(in_channels, in_channels_1, in_channels_2, hidden_channels, n_layers=n_layers, **kwargs).to(device)
+        elif model_type == "CIN":
+            self.base_model = CIN(in_channels, in_channels_1, in_channels_2, hidden_channels, n_layers=n_layers, **kwargs).to(device)
         elif model_type == "SCN2":
             self.base_model = SCN2(in_channels, in_channels, in_channels, n_layers=n_layers, **kwargs).to(device)
         elif model_type == "CXN":
@@ -93,7 +95,7 @@ class TNN(nn.Module):
                             normalize_matrix(data.hodge_laplacian_0, 0),
                             normalize_matrix(data.hodge_laplacian_1, 1),
                             normalize_matrix(data.hodge_laplacian_2, 2))
-        elif self.model_type == "CWN":
+        elif self.model_type in ("CWN", "CIN"):
             x = self.base_model(data.x_0, data.x_1, data.x_2,
                             data.adjacency_1,
                             data.incidence_2,
@@ -832,3 +834,60 @@ class UniGCNIILayer(torch.nn.Module):
         return x_0, x_1
 
 
+
+
+class CINLayer(CWNLayer):
+    r"""CWN layer with an epsilon-residual update, in the spirit of CIN/GIN.
+
+    References
+    ----------
+    .. [1] Bodnar, et al.
+        Weisfeiler and Lehman go cellular: CW networks.
+        NeurIPS 2021.
+        https://arxiv.org/abs/2106.12575
+    """
+
+    def __init__(self, *args, eps=0.0, train_eps=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if train_eps:
+            self.eps = nn.Parameter(torch.tensor([eps]))
+        else:
+            self.register_buffer("eps", torch.tensor([eps]))
+
+    def forward(self, x_0, x_1, x_2, adjacency_0, incidence_2, incidence_1_t):
+        x_convolved_1_to_1 = self.conv_1_to_1(x_1, x_2, adjacency_0, incidence_2)
+        x_convolved_0_to_1 = self.conv_0_to_1(x_0, x_1, incidence_1_t)
+        x_aggregated = self.aggregate_fn(x_convolved_1_to_1, x_convolved_0_to_1)
+        return self.update_fn(x_aggregated + (1.0 + self.eps) * x_1, x_1)
+
+
+class CIN(CWN):
+    r"""CW network variant with CIN-style epsilon-residual layers."""
+
+    def __init__(
+        self,
+        in_channels_0,
+        in_channels_1,
+        in_channels_2,
+        hid_channels,
+        n_layers,
+        **kwargs,
+    ):
+        super().__init__(
+            in_channels_0,
+            in_channels_1,
+            in_channels_2,
+            hid_channels,
+            n_layers,
+            **kwargs,
+        )
+        self.layers = torch.nn.ModuleList(
+            CINLayer(
+                in_channels_0=hid_channels,
+                in_channels_1=hid_channels,
+                in_channels_2=hid_channels,
+                out_channels=hid_channels,
+                **kwargs,
+            )
+            for _ in range(n_layers)
+        )
