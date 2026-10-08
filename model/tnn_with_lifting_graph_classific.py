@@ -424,13 +424,15 @@ class TNN_KNN_MLP_G(nn.Module):
             # --- k_v sampling ---
             k_logits = self.k_mlp(embedding_mean)
             k_range = torch.arange(self.k_min, self.k_max + 1, device=k_logits.device, dtype=k_logits.dtype)
-            k_soft = (F.softmax(k_logits, dim=-1) * k_range.unsqueeze(0)).sum(dim=-1)
+            k_probs = F.softmax(k_logits, dim=-1)
             if self.deterministic or not self.training:
-                k_hard = k_range[k_logits.argmax(dim=-1)]
+                k_hard = F.one_hot(
+                    k_logits.argmax(dim=-1), num_classes=k_range.numel()
+                ).to(k_logits.dtype)
+                k_onehot = k_hard + (k_probs - k_probs.detach())
             else:
-                k_sample = F.gumbel_softmax(k_logits, tau=1.0, hard=True)
-                k_hard = torch.sum(k_sample * k_range, dim=-1)
-            k_v = k_hard + (k_soft - k_soft.detach())
+                k_onehot = F.gumbel_softmax(k_logits, tau=1.0, hard=True)
+            k_v = k_onehot @ k_range
             self.k_v = k_v
 
             mask_knn = torch.nn.functional.one_hot(data.batch_0, num_classes=vertex_slice.shape[0] - 1)
@@ -448,12 +450,17 @@ class TNN_KNN_MLP_G(nn.Module):
                 neg_topk = torch.topk(-distances, top_k, dim=-1)
                 knn_indices = neg_topk[1]
                 in_graph = (-neg_topk[0]) < 1e6
-                aranged_indices = torch.arange(top_k, device=x.device).expand(self.k_v.shape[0], -1)
-                kv_mask = (aranged_indices < k_v.unsqueeze(1)) & in_graph
-                first_neighbor = knn_indices[:, 0].unsqueeze(1)
-                knn_selected = torch.where(kv_mask, knn_indices, first_neighbor)
-                knn_indices = knn_selected
-                pooled_embeddings = embeddings[knn_indices.long()].mean(axis=1, keepdim=True).squeeze()
+                # differentiable rank mask: slot r contributes iff r < k_v,
+                # with gradients flowing to the k_v logits
+                rank_incl = (
+                    k_range.unsqueeze(1)
+                    >= torch.arange(
+                        1, top_k + 1, device=k_logits.device, dtype=k_logits.dtype
+                    ).unsqueeze(0)
+                ).to(k_logits.dtype)
+                rank_weights = (k_onehot @ rank_incl) * in_graph.to(k_logits.dtype)
+                w = rank_weights.unsqueeze(-1)
+                pooled_embeddings = (embeddings[knn_indices.long()] * w).sum(dim=1) / w.sum(dim=1).clamp(min=1e-6)
 
                 # --- inclusion sampling ---
                 include_probs = torch.sigmoid(self.mlp(pooled_embeddings))  # Shape: [num_nodes, 1]
@@ -476,7 +483,7 @@ class TNN_KNN_MLP_G(nn.Module):
 
                 mask = torch.zeros((num_nodes, num_nodes), device=data.x.device)
 
-                node_triangle_matrix = mask.scatter_(1, knn_indices, straight_through_samples.repeat(1, torch.max(self.k_v).long().item()))
+                node_triangle_matrix = mask.scatter_(1, knn_indices, straight_through_samples * rank_weights)
 
                 # hyperedge of node v: its k_v nearest neighbors (v included)
                 hyperedge_incidence = node_triangle_matrix.transpose(0, 1)
@@ -532,11 +539,15 @@ class TNN_KNN_MLP_G(nn.Module):
                 neg_topk = torch.topk(-distances, top_k, dim=-1)
                 knn_indices = neg_topk[1]
                 in_graph = (-neg_topk[0]) < 1e6
-                aranged_indices = torch.arange(top_k, device=x.device).expand(self.k_v.shape[0], -1)
-                kv_mask = (aranged_indices < k_v.unsqueeze(1)) & in_graph
-                first_neighbor = knn_indices[:, 0].unsqueeze(1)
-                knn_selected = torch.where(kv_mask, knn_indices, first_neighbor)
-                knn_indices = knn_selected
+                # differentiable rank mask: slot r contributes iff r < k_v,
+                # with gradients flowing to the k_v logits
+                rank_incl = (
+                    k_range.unsqueeze(1)
+                    >= torch.arange(
+                        1, top_k + 1, device=k_logits.device, dtype=k_logits.dtype
+                    ).unsqueeze(0)
+                ).to(k_logits.dtype)
+                rank_weights = (k_onehot @ rank_incl) * in_graph.to(k_logits.dtype)
 
 
                 num_nodes, k_edges = knn_indices.shape
@@ -579,6 +590,7 @@ class TNN_KNN_MLP_G(nn.Module):
                 else:
                     edge_classes = torch.bernoulli(edge_probs)
                 edge_classes = edge_classes + (edge_probs - edge_probs.detach())  # Preserve gradients
+                edge_classes = edge_classes * rank_weights.reshape(-1)
 
 
                                 # Step 4: Construct incidence matrix as a sparse tensor with gradients
